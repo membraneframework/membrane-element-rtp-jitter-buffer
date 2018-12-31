@@ -1,4 +1,5 @@
 defmodule Membrane.Element.RTP.JitterBuffer.SampleClock do
+  @moduledoc false
   use GenServer
   @timer_delay 30
 
@@ -13,22 +14,13 @@ defmodule Membrane.Element.RTP.JitterBuffer.SampleClock do
   end
 
   @impl true
-  def handle_info(
-        :tick,
-        %{
-          target: pid
-        } = state
-      ) do
+  def handle_info(:tick, %{target: pid} = state) do
     schedule_work()
-    do_work(pid)
+    Process.send_after(pid, :tick, @timer_delay)
     {:noreply, state}
   end
 
   defp schedule_work() do
     Process.send_after(self(), :tick, @timer_delay)
-  end
-
-  defp do_work(pid) do
-    Process.send_after(pid, :tick, @timer_delay)
   end
 end

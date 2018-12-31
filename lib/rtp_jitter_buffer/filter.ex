@@ -1,10 +1,8 @@
 defmodule Membrane.Element.RTP.JitterBuffer.Filter do
   use Membrane.Element.Base.Filter
-  alias Membrane.Buffer
   alias Membrane.Element.RTP.JitterBuffer.Cache
+  alias Membrane.Element.RTP.JitterBuffer.Cache.CacheRecord
   alias Membrane.Caps.RTP, as: Caps
-
-  @roll_over_seq_num -1
 
   # TODO rename filter to something buffer like
 
@@ -14,23 +12,21 @@ defmodule Membrane.Element.RTP.JitterBuffer.Filter do
   # 4. Must drop packet with too old deadline
   # 5. If packet does not come in the deadline must drop and send next valid
 
+  # Possible corner case
+  # when timestamp of last (seq_num=65536) and first (seq_num=0)
+
   # TODO Add buffer size
-  # TODO handle rollover
 
-  # Rollover strategy
-  # Add field to state for rollover packets
-  # When adding if rollover is list
-  #  IF packet number is between last and max seq num
-  #    add it to  cache
-  #  else
-  #    add it to rollover list
-
-  # When last possible seqnum is served
-  #   Pour rollover list to cache
-  #   set last seq to -1 (so 0 packet will be released next)
+  # Problem with using timestamps is that few packets can have same timestamp but different seq_num
 
   @deadline_interval 20
   @initial_deadline 100
+  @seq_number_delta 100
+  @max_seq_num :math.pow(2, 16) - 1
+
+  defguard is_?(new_seq_num, last_seq_num)
+           when new_seq_num < @seq_number_delta and
+                  last_seq_num < @max_seq_num - @seq_number_delta
 
   def_output_pads output: [
                     caps: Caps
@@ -45,7 +41,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.Filter do
                 description: "Function that sets up scheduler"
               ],
               clock_interval: [
-                # TODO: Replace with time calulcated from RTP data
+                # TODO: Replace with time calculated from RTP data
                 description: "Amount of time between ticks in ms",
                 default: 30
               ]
@@ -53,13 +49,11 @@ defmodule Membrane.Element.RTP.JitterBuffer.Filter do
   defmodule State do
     @moduledoc false
     @enforce_keys [:cache, :next_deadline]
-    defstruct @enforce_keys ++ [:last_seq_num, :last_timestamp]
+    defstruct @enforce_keys
 
     @type t :: %__MODULE__{
-            last_seq_num: 0..65536,
-            last_timestamp: pos_integer() | nil,
-            cache: Heap.t(),
-            next_deadline: nil | 0..65536
+            cache: Cache.t(),
+            next_deadline: nil | pos_integer()
           }
   end
 
@@ -75,65 +69,37 @@ defmodule Membrane.Element.RTP.JitterBuffer.Filter do
   end
 
   @impl true
-  def handle_process(:input, buffer, _context, state) do
-    %State{cache: cache, last_seq_num: last_seq_num} = state
-    %Buffer{metadata: %{rtp: %{sequence_number: seq_num}}} = buffer
-
-    case seq_num do
-      # SeqNum Rollover?
-      0 ->
-        nil
-
-      value when value > last_seq_num ->
-        updated_cache = Cache.insert(cache, {seq_num, buffer})
-        {:ok, %State{state | cache: updated_cache}}
-
-      # Lost packet came late ignore it
-      value when value <= last_seq_num ->
-        {:ok, state}
+  def handle_process(:input, buffer, _context, %State{cache: cache} = state) do
+    case Cache.insert_buffer(cache, buffer) do
+      {:ok, result} -> {:ok, %State{state | cache: result}}
+      {:error, _reason} -> {:ok, state}
     end
   end
 
   @impl true
-  def handle_other(:tick, _context, state) do
-    %State{last_seq_num: last, cache: cache} = state
-    next_should_be_served = last + 1
-
+  def handle_other(:tick, _context, %State{cache: cache} = state) do
     cache
-    |> Cache.first()
-    |> handle_cache_lookup_result(next_should_be_served, state)
+    |> Cache.get_next_buffer()
+    |> handle_cache_lookup_result(state)
   end
 
-  # TODO find a better name for me
   @spec handle_cache_lookup_result(
-          {Cache.cache_record() | nil, Heap.t()},
-          0..65536,
+          {:ok, {CacheRecord.t(), t}} | {:error, Cache.get_buffer_error()},
           State.t()
         ) :: Membrane.Element.Base.Mixin.CommonBehaviour.callback_return_t()
-  defp handle_cache_lookup_result(result, next_expected_seq_number, state)
+  defp handle_cache_lookup_result(result, state)
 
-  defp handle_cache_lookup_result({{head_seq_num, buffer}, cache}, head_seq_num, state) do
+  defp handle_cache_lookup_result({:ok, {%CacheRecord{buffer: buffer}, cache}}, state) do
     command = [buffer: {:output, buffer}]
-
-    new_state = %State{
-      state
-      | cache: cache,
-        last_seq_num: head_seq_num,
-        next_deadline: nil
-    }
-
+    new_state = %State{state | cache: cache, next_deadline: nil}
     {{:ok, command}, new_state}
   end
 
-  defp handle_cache_lookup_result({nil, _}, next, state) do
-    apply_deadline(next, state)
+  defp handle_cache_lookup_result({:error, :not_present}, state) do
+    apply_deadline(state)
   end
 
-  defp handle_cache_lookup_result({{_, _}, _}, next, state) do
-    apply_deadline(next, state)
-  end
-
-  defp apply_deadline(next, %State{next_deadline: next_deadline} = state) do
+  defp apply_deadline(%State{next_deadline: next_deadline} = state) do
     next_deadline_value =
       case next_deadline do
         # packet is not yet on deadline
@@ -145,12 +111,10 @@ defmodule Membrane.Element.RTP.JitterBuffer.Filter do
           value - @deadline_interval
       end
 
-    cond do
-      next_deadline_value <= 0 ->
-        {:ok, %State{state | last_seq_num: next, next_deadline: nil}}
-
-      true ->
-        {:ok, %State{state | next_deadline: next_deadline_value}}
+    if next_deadline_value <= 0 do
+      {:ok, %State{state | cache: Cache.skip_buffer(state.cache), next_deadline: nil}}
+    else
+      {:ok, %State{state | next_deadline: next_deadline_value}}
     end
   end
 end
