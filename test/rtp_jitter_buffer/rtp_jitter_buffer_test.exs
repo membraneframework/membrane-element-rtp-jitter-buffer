@@ -1,102 +1,58 @@
 defmodule Membrane.Element.RTP.JitterBufferTest do
   use ExUnit.Case
 
-  alias Membrane.Element.RTP.JitterBuffer.Filter, as: RTPJitterBuffer
-  alias Membrane.Element.RTP.JitterBuffer.Cache
+  alias Membrane.Element.RTP.JitterBuffer, as: RTPJitterBuffer
+  alias RTPJitterBuffer.State
+  alias Membrane.Element.RTP.JitterBuffer.{Cache, CacheHelper}
   alias Membrane.Element.RTP.JitterBuffer.Cache.CacheRecord
   alias Membrane.Test.BufferFactory
 
-  @initial_deadline 100
   @base_seq_number 50
+  @max_buffer_size 10
 
   setup_all do
-    [state: sample_state(), buffer: BufferFactory.sample_buffer(@base_seq_number)]
-  end
+    buffer = BufferFactory.sample_buffer(@base_seq_number)
+    {:ok, cache} = Cache.insert_buffer(%Cache{}, buffer)
+    state = %State{cache: cache, slot_count: @max_buffer_size}
 
-  describe "When initializing" do
-    test "calls clock setup with clock interval" do
-      {:ok, agent} = Agent.start_link(fn -> nil end)
-      interval = 20
-      clock_setup = fn a -> Agent.update(agent, fn _ -> a end) end
-
-      options = %RTPJitterBuffer{
-        setup_clock: clock_setup,
-        clock_interval: interval
-      }
-
-      assert {:ok, %RTPJitterBuffer.State{cache: Cache.new(), next_deadline: nil}} ==
-               RTPJitterBuffer.handle_init(options)
-
-      assert Agent.get(agent, fn a -> a end) == interval
-    end
+    [state: state, buffer: buffer]
   end
 
   describe "When new packet comes Jitter Buffer" do
     test "adds that packet to buffer when it comes on time", %{state: state, buffer: buffer} do
       assert {:ok, state} = RTPJitterBuffer.handle_process(:input, buffer, nil, state)
-
-      assert %Membrane.Element.RTP.JitterBuffer.Filter.State{
-               cache: cache,
-               next_deadline: nil
-             } = state
-
+      assert %RTPJitterBuffer.State{cache: cache} = state
       assert {:ok, {%CacheRecord{buffer: ^buffer}, _}} = Cache.get_next_buffer(cache)
     end
 
-    test "refuses to add that packet when it comes late", %{state: state, buffer: buffer} do
+    test "refuses to add that packet when it comes late", %{state: state} do
       late_buffer = BufferFactory.sample_buffer(@base_seq_number - 2)
-      {:ok, state} = RTPJitterBuffer.handle_process(:input, buffer, nil, state)
       assert {:ok, ^state} = RTPJitterBuffer.handle_process(:input, late_buffer, nil, state)
     end
-  end
 
-  describe "When clock ticks Jitter Buffer" do
-    setup %{state: state, buffer: buffer} do
-      {:ok, updated_cache} = Cache.insert_buffer(state.cache, buffer)
+    test "adds it and when buffer is full returns one buffer", %{state: state} do
+      last_buffer = BufferFactory.sample_buffer(@base_seq_number + @max_buffer_size)
 
-      [
-        state_with_buffer: %RTPJitterBuffer.State{state | cache: updated_cache}
-      ]
+      assert {{:ok, commands}, %State{cache: result_cache}} =
+               RTPJitterBuffer.handle_process(:input, last_buffer, nil, state)
+
+      assert {:output, %Membrane.Buffer{metadata: %{rtp: %{sequence_number: 50}}}} =
+               Keyword.fetch!(commands, :buffer)
+
+      refute CacheHelper.has_buffer_with_seq_num(result_cache, @base_seq_number)
     end
 
-    test "if possible returns next packet", %{state_with_buffer: state, buffer: buffer} do
-      assert {{:ok, commands}, updated_state} = RTPJitterBuffer.handle_other(:tick, nil, state)
+    test "when buffer is missing returns an event discontinuity" do
+      state = %State{slot_count: @max_buffer_size}
+      first_buffer = BufferFactory.sample_buffer(@base_seq_number + @max_buffer_size / 2)
+      last_buffer = BufferFactory.sample_buffer(@base_seq_number + @max_buffer_size)
+      {:ok, cache} = Cache.insert_buffer(%Cache{}, first_buffer)
+      filled_state = %State{state | cache: %Cache{cache | last_seq_num: @base_seq_number - 1}}
 
-      assert Keyword.fetch!(commands, :buffer) == {:output, buffer}
-      assert Enum.count(updated_state.cache.heap) == Enum.count(state.cache.heap) - 1
+      assert {{:ok, commands}, %State{cache: result_cache}} =
+               RTPJitterBuffer.handle_process(:input, last_buffer, nil, filled_state)
+
+      assert Keyword.fetch!(commands, :event) == {:output, %Membrane.Event.Discontinuity{}}
     end
-
-    test "starts packet deadline with default value if packet is missing", %{state: state} do
-      assert {:ok, state} = RTPJitterBuffer.handle_other(:tick, nil, state)
-      assert state.next_deadline == @initial_deadline
-    end
-
-    test "reduces TTL if packet is already on a deadline", %{state: state} do
-      state_with_deadline = %RTPJitterBuffer.State{state | next_deadline: @initial_deadline}
-      assert {:ok, state} = RTPJitterBuffer.handle_other(:tick, nil, state_with_deadline)
-      assert state.next_deadline < @initial_deadline
-    end
-
-    test "if TTL drops to 0 it just returns next packet", %{state: state} do
-      state_with_deadline = %RTPJitterBuffer.State{state | next_deadline: 1}
-      assert {:ok, state} = RTPJitterBuffer.handle_other(:tick, nil, state_with_deadline)
-      assert state.next_deadline == nil
-    end
-
-    test "if packet comes late it returns it and clears it's deadline", context do
-      %{state_with_buffer: state, buffer: buffer} = context
-      state_deadline = %RTPJitterBuffer.State{state | next_deadline: 1}
-
-      assert {{:ok, commands}, state} = RTPJitterBuffer.handle_other(:tick, nil, state_deadline)
-      assert state.next_deadline == nil
-      assert Keyword.fetch!(commands, :buffer) == {:output, buffer}
-    end
-  end
-
-  defp sample_state() do
-    %RTPJitterBuffer.State{
-      cache: Cache.new(),
-      next_deadline: nil
-    }
   end
 end

@@ -8,50 +8,53 @@ defmodule Membrane.Element.RTP.JitterBuffer.CacheTest do
   @base_seq_num 65_505
   @next_seq_num @base_seq_num + 1
 
-  @base_timestamp @base_seq_num * BufferFactory.timestamp_increment()
-  @next_timestamp @next_seq_num * BufferFactory.timestamp_increment()
-
   setup_all do
-    [base_cache: new_testing_cache(@base_seq_num, @base_timestamp)]
+    [base_cache: new_testing_cache(@base_seq_num)]
   end
 
-  describe "When adding buffer to Cache it" do
+  describe "When adding buffer to the Cache it" do
     test "accepts first buffer" do
       buffer = BufferFactory.sample_buffer(@base_seq_num)
-      cache = Cache.new()
 
-      assert {:ok, updated_cache} = Cache.insert_buffer(cache, buffer)
+      assert {:ok, updated_cache} = Cache.insert_buffer(%Cache{}, buffer)
       assert CacheHelper.has_buffer(updated_cache, buffer)
     end
 
-    test "refuses packet with seq_number smaller than last served", %{base_cache: cache} do
+    test "refuses packet with a seq_number smaller than last served", %{base_cache: cache} do
       buffer = BufferFactory.sample_buffer(@base_seq_num - 1)
 
       assert {:error, :late_packet} = Cache.insert_buffer(cache, buffer)
     end
 
-    test "accepts buffer that got in time", %{base_cache: cache} do
+    test "accepts a buffer that got in time", %{base_cache: cache} do
       buffer = BufferFactory.sample_buffer(@next_seq_num)
       assert {:ok, updated_cache} = Cache.insert_buffer(cache, buffer)
       assert CacheHelper.has_buffer(updated_cache, buffer)
     end
 
-    test "puts buffer to rollover cache if sequence number has rolled over", %{base_cache: cache} do
+    test "puts it to the rollover if a sequence number has rolled over", %{base_cache: cache} do
       buffer = BufferFactory.sample_buffer(10)
       assert {:ok, cache} = Cache.insert_buffer(cache, buffer)
       assert Enum.member?(cache.rollover, buffer)
     end
 
-    test "extracts RTP metadata correctly from buffer", %{base_cache: cache} do
+    test "extracts the RTP metadata correctly from buffer", %{base_cache: cache} do
       buffer = BufferFactory.sample_buffer(@next_seq_num)
       {:ok, %Cache{heap: heap}} = Cache.insert_buffer(cache, buffer)
 
-      assert %Cache.CacheRecord{seq_num: @next_seq_num, timestamp: @next_timestamp} =
-               Heap.root(heap)
+      assert %CacheRecord{seq_num: read_seq_num} = Heap.root(heap)
+
+      assert read_seq_num == @next_seq_num
+    end
+
+    test "does not change the Cache when duplicate is inserted", %{base_cache: base_cache} do
+      buffer = BufferFactory.sample_buffer(@next_seq_num)
+      {:ok, cache} = Cache.insert_buffer(base_cache, buffer)
+      assert {:ok, ^cache} = Cache.insert_buffer(cache, buffer)
     end
   end
 
-  describe "When getting buffer from Cache it" do
+  describe "When getting a buffer from Cache it" do
     setup %{base_cache: base_cache} do
       buffer = BufferFactory.sample_buffer(@next_seq_num)
       {:ok, cache} = Cache.insert_buffer(base_cache, buffer)
@@ -62,25 +65,21 @@ defmodule Membrane.Element.RTP.JitterBuffer.CacheTest do
       ]
     end
 
-    test "returns root buffer", %{cache: cache, buffer: buffer} do
+    test "returns the root buffer", %{cache: cache, buffer: buffer} do
       assert {:ok, {record, empty_cache}} = Cache.get_next_buffer(cache)
       assert record.buffer == buffer
       assert empty_cache.heap.size == 0
       assert empty_cache.last_seq_num == record.seq_num
-      assert empty_cache.last_timestamp == record.timestamp
     end
 
-    test "returns error when heap is empty", %{base_cache: cache} do
+    test "returns an error when heap is empty", %{base_cache: cache} do
       assert {:error, :not_present} == Cache.get_next_buffer(cache)
     end
 
-    test "returns error when heap is not empty, but next buffer is not present", %{cache: cache} do
-      broken_cache = %Cache{
-        cache
-        | last_seq_num: @base_seq_num - 1,
-          last_timestamp: @base_timestamp - 1
-      }
-
+    test "returns an error when heap is not empty, but the next buffer is not present", %{
+      cache: cache
+    } do
+      broken_cache = %Cache{cache | last_seq_num: @base_seq_num - 1}
       assert {:error, :not_present} == Cache.get_next_buffer(broken_cache)
     end
 
@@ -100,7 +99,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.CacheTest do
     end
 
     test "handles rollover", %{base_cache: base_cache} do
-      cache = %Cache{base_cache | last_seq_num: 65_533, last_timestamp: 0}
+      cache = %Cache{base_cache | last_seq_num: 65_533}
       before_rollover_seq_nums = 65_534..65_535
       after_rollover_seq_nums = 0..10
 
@@ -115,27 +114,63 @@ defmodule Membrane.Element.RTP.JitterBuffer.CacheTest do
     end
   end
 
-  describe "When skipping buffer" do
-    test "bumps next seq_num", %{base_cache: %Cache{last_seq_num: last} = cache} do
-      assert %Cache{last_seq_num: next} = Cache.skip_buffer(cache)
+  describe "When skipping buffer it" do
+    test "increments sequence number", %{base_cache: %Cache{last_seq_num: last} = cache} do
+      assert {:ok, %Cache{last_seq_num: next}} = Cache.skip_buffer(cache)
       assert next = last + 1
     end
 
-    test "does nothing is cache has never seen a buffer" do
-      cache = Cache.new()
-      assert cache == Cache.skip_buffer(cache)
+    test "returns an error if the Cache is uninitialized" do
+      assert {:error, :cache_not_initialized} == Cache.skip_buffer(%Cache{})
     end
 
     test "rolls over if needed", %{base_cache: cache} do
       updated_cache = %Cache{cache | last_seq_num: 65_535}
-      assert %Cache{cache | last_seq_num: 0} == Cache.skip_buffer(updated_cache)
+      assert {:ok, %Cache{cache | last_seq_num: 0}} == Cache.skip_buffer(updated_cache)
     end
   end
 
-  defp new_testing_cache(seq_num, timestamp) do
+  describe "when counting size it" do
+    test "counts empty slots as if they occupied space", %{base_cache: base} do
+      wanted_size = 10
+      buffer = BufferFactory.sample_buffer(@base_seq_num + wanted_size)
+      {:ok, cache} = Cache.insert_buffer(base, buffer)
+
+      assert Cache.size(cache) == wanted_size
+    end
+
+    test "returns 1 if the Cache has exactly one record", %{base_cache: base_cache} do
+      buffer = BufferFactory.sample_buffer(@next_seq_num)
+      {:ok, cache} = Cache.insert_buffer(base_cache, buffer)
+      assert Cache.size(cache) == 1
+    end
+
+    test "returns 0 if the Cache is empty", %{base_cache: cache} do
+      assert Cache.size(cache) == 0
+    end
+
+    test "handles rollover size" do
+      rollover = rollover_with_blanks()
+
+      cache = %Cache{rollover: rollover, last_seq_num: 50, end_seq_num: 50}
+      assert Cache.size(cache) == 10
+    end
+
+    test "takes into account empty slots in both rollover and heap", %{base_cache: base} do
+      buffer = BufferFactory.sample_buffer(@base_seq_num + 10)
+
+      {:ok, cache} =
+        %Cache{base | rollover: rollover_with_blanks()}
+        |> Cache.insert_buffer(buffer)
+
+      assert Cache.size(cache) == 20
+    end
+  end
+
+  defp new_testing_cache(seq_num) do
     %Cache{
-      last_timestamp: timestamp,
       last_seq_num: seq_num,
+      end_seq_num: seq_num,
       rollover: [],
       heap: Heap.new(&CacheRecord.rtp_comparator/2)
     }
@@ -147,5 +182,12 @@ defmodule Membrane.Element.RTP.JitterBuffer.CacheTest do
       {:ok, cache} = Cache.insert_buffer(acc, buffer)
       cache
     end)
+  end
+
+  # Returns shuffled rollover list that span over 10 slots
+  defp rollover_with_blanks() do
+    (Enum.into(1..2, []) ++ Enum.into(5..7, []) ++ Enum.into(9..10, []))
+    |> Enum.shuffle()
+    |> Enum.map(&BufferFactory.sample_buffer/1)
   end
 end
