@@ -45,45 +45,39 @@ defmodule Membrane.Element.RTP.JitterBuffer do
   end
 
   @impl true
-  def handle_init(options) do
-    %__MODULE__{
-      slot_count: slot_count
-    } = options
-
-    {:ok, %State{slot_count: slot_count}}
-  end
+  def handle_init(%__MODULE__{slot_count: slot_count}),
+    do: {:ok, %State{slot_count: slot_count}}
 
   @impl true
-  def handle_process(:input, buffer, _context, state) do
-    state
-    |> insert_buffer_into_cache(buffer)
-    |> retrieve_buffer_if_needed()
-  end
-
-  defp insert_buffer_into_cache(%State{cache: cache} = state, buffer) do
+  def handle_process(:input, buffer, _context, %State{cache: cache} = state) do
     case Cache.insert_buffer(cache, buffer) do
       {:ok, result} ->
-        %State{state | cache: result}
+        new_state = %State{state | cache: result}
+
+        if buffer_full?(new_state) do
+          retrieve_buffer(new_state)
+        else
+          {:ok, new_state}
+        end
 
       {:error, _reason} ->
-        state
+        {:ok, state}
     end
   end
 
-  defp retrieve_buffer_if_needed(%State{cache: cache, slot_count: slot_count} = state) do
-    if Cache.size(cache) >= slot_count do
-      case Cache.get_next_buffer(cache) do
-        {:ok, {%CacheRecord{buffer: out_buffer}, cache}} ->
-          action = [{:buffer, {:output, out_buffer}}]
-          {{:ok, action}, %State{state | cache: cache}}
+  defp retrieve_buffer(%State{cache: cache} = state) do
+    case Cache.get_next_buffer(cache) do
+      {:ok, {%CacheRecord{buffer: out_buffer}, cache}} ->
+        action = [{:buffer, {:output, out_buffer}}]
+        {{:ok, action}, %State{state | cache: cache}}
 
-        {:error, :not_present} ->
-          {:ok, updated_cache} = Cache.skip_buffer(cache)
-          action = [{:event, {:output, %Membrane.Event.Discontinuity{}}}]
-          {{:ok, action}, %State{state | cache: updated_cache}}
-      end
-    else
-      {:ok, state}
+      {:error, :not_present} ->
+        {:ok, updated_cache} = Cache.skip_buffer(cache)
+        action = [{:event, {:output, %Membrane.Event.Discontinuity{}}}]
+        {{:ok, action}, %State{state | cache: updated_cache}}
     end
   end
+
+  defp buffer_full?(%State{cache: cache, slot_count: slot_count}),
+    do: Cache.size(cache) >= slot_count
 end
