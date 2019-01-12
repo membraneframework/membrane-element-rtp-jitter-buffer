@@ -21,7 +21,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.PipelineTest do
 
     Membrane.Pipeline.play(pipeline)
 
-    Enum.each(1..(@last_number - buffer_size), fn elem ->
+    Enum.each(1..(@last_number - 1), fn elem ->
       assert_receive %Membrane.Buffer{
                        metadata: %{rtp: %{sequence_number: ^elem, timestamp: _}},
                        payload: _
@@ -39,23 +39,25 @@ defmodule Membrane.Element.RTP.JitterBuffer.PipelineTest do
       cnt, _ when cnt > @last_number ->
         {[], cnt}
 
+      @last_number, _ ->
+        {[event: {:output, %Membrane.Event.EndOfStream{}}], @last_number + 1}
+
       cnt, size ->
+        range = cnt..(cnt + size) |> trunc_range()
+        _..last_element = range
+
         actions =
-          cnt..(cnt + size)
-          |> trunc_range()
+          range
           # Introduces slight variation in buffer order
           |> Enum.chunk_every(round(buffer_size / 2))
           |> Enum.flat_map(&Enum.shuffle/1)
           |> Enum.map(&action_from_number/1)
 
-        {actions, cnt + size}
+        {actions, last_element}
     end
   end
 
-  defp action_from_number(element) do
-    buffer = BufferFactory.sample_buffer(element)
-    {:buffer, {:output, buffer}}
-  end
+  defp action_from_number(element), do: {:buffer, {:output, BufferFactory.sample_buffer(element)}}
 
   defp trunc_range(start.._) when start >= @last_number, do: []
   defp trunc_range(start..range_end) when range_end >= @last_number, do: start..@last_number

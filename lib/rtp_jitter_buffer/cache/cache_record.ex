@@ -11,8 +11,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.Cache.CacheRecord do
           buffer: Membrane.Buffer.t()
         }
 
-  @spec new(Membrane.Buffer.t(), Types.sequence_number()) ::
-          Membrane.Element.RTP.JitterBuffer.Cache.CacheRecord.t()
+  @spec new(Membrane.Buffer.t(), Types.sequence_number()) :: t()
   def new(buffer, seq_num),
     do: %__MODULE__{
       seq_num: seq_num,

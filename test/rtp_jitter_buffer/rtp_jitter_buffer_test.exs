@@ -47,12 +47,13 @@ defmodule Membrane.Element.RTP.JitterBufferTest do
       first_buffer = BufferFactory.sample_buffer(@base_seq_number + @max_buffer_size / 2)
       last_buffer = BufferFactory.sample_buffer(@base_seq_number + @max_buffer_size)
       {:ok, cache} = Cache.insert_buffer(%Cache{}, first_buffer)
-      filled_state = %State{state | cache: %Cache{cache | last_seq_num: @base_seq_number - 1}}
+      filled_state = %State{state | cache: %Cache{cache | prev_seq_num: @base_seq_number - 1}}
 
       assert {{:ok, commands}, %State{cache: result_cache}} =
                RTPJitterBuffer.handle_process(:input, last_buffer, nil, filled_state)
 
       assert Keyword.fetch!(commands, :event) == {:output, %Membrane.Event.Discontinuity{}}
+      assert result_cache.prev_seq_num == filled_state.cache.prev_seq_num + 1
     end
   end
 end

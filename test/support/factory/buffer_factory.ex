@@ -1,17 +1,17 @@
 defmodule Membrane.Test.BufferFactory do
   @moduledoc false
   alias Membrane.Buffer
-  alias Membrane.Element.RTP.Types
+  alias Membrane.Element.RTP.JitterBuffer
 
   @timestamp_increment 30_000
 
-  @spec timestamp_increment() :: Types.timestamp()
+  @spec timestamp_increment() :: JitterBuffer.timestamp()
   def timestamp_increment(), do: @timestamp_increment
 
-  @spec sample_buffer(Types.sequence_number()) :: Membrane.Buffer.t()
+  @spec sample_buffer(JitterBuffer.sequence_number()) :: Membrane.Buffer.t()
   def sample_buffer(seq_num), do: sample_buffer(seq_num, seq_num)
 
-  @spec sample_buffer(Types.sequence_number(), pos_integer()) :: Membrane.Buffer.t()
+  @spec sample_buffer(JitterBuffer.sequence_number(), pos_integer()) :: Membrane.Buffer.t()
   def sample_buffer(seq_num, timestamp) do
     %Buffer{
       payload: <<0, 255>>,

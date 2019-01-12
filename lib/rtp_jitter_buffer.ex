@@ -3,12 +3,13 @@ defmodule Membrane.Element.RTP.JitterBuffer do
   Element that buffers and reorders RTP packets based on sequence_number.
   """
   use Membrane.Element.Base.Filter
+  alias Membrane.Event.EndOfStream
   alias Membrane.Element.RTP.JitterBuffer.Cache
   alias Membrane.Element.RTP.JitterBuffer.Cache.CacheRecord
   alias Membrane.Caps.RTP, as: Caps
 
-  # TODO Maybe this buffer should be "toilet" type element not pull nor pull
-  # With current approach we can't ever fully empty buffer
+  @type sequence_number :: 0..65_535
+  @type timestamp :: pos_integer()
 
   def_output_pads output: [
                     caps: Caps
@@ -24,7 +25,7 @@ defmodule Membrane.Element.RTP.JitterBuffer do
                 spec: pos_integer(),
                 description: """
                 Number of slots for buffers. Each time last slot is filled `JitterBuffer`
-                will start send buffer through `:output` pad.
+                will send buffer through `:output` pad.
                 """
               ]
 
@@ -39,25 +40,40 @@ defmodule Membrane.Element.RTP.JitterBuffer do
           }
   end
 
-  # TODO recalculate bytes to buffers
-  def handle_demand(:output, size, :buffers, _ctx, state) do
+  @impl true
+  def handle_init(%__MODULE__{slot_count: slot_count}),
+    do: {:ok, %State{slot_count: slot_count}}
+
+  def handle_demand(:output, size, _units, _ctx, state) do
     {{:ok, demand: {:input, size}}, state}
   end
 
   @impl true
-  def handle_init(%__MODULE__{slot_count: slot_count}),
-    do: {:ok, %State{slot_count: slot_count}}
+  def handle_event(pad, event, context, state)
+
+  def handle_event(_, %EndOfStream{}, _context, %State{cache: cache} = state) do
+    actions =
+      cache
+      |> Cache.dump()
+      |> Enum.flat_map(fn %Cache.CacheRecord{buffer: buffer} ->
+        [buffer: {:output, buffer}]
+      end)
+
+    {{:ok, actions}, state}
+  end
+
+  def handle_event(_, _, _, state), do: {:ok, state}
 
   @impl true
   def handle_process(:input, buffer, _context, %State{cache: cache} = state) do
     case Cache.insert_buffer(cache, buffer) do
       {:ok, result} ->
-        new_state = %State{state | cache: result}
+        state = %State{state | cache: result}
 
-        if buffer_full?(new_state) do
-          retrieve_buffer(new_state)
+        if buffer_full?(state) do
+          retrieve_buffer(state)
         else
-          {:ok, new_state}
+          {:ok, state}
         end
 
       {:error, _reason} ->

@@ -56,7 +56,8 @@ defmodule Membrane.Element.RtpJitterBuffer.MixProject do
       {:dialyxir, "~> 1.0.0-rc.4", only: [:dev], runtime: false},
       {:heap, "~> 2.0"},
       {:membrane_caps_rtp,
-       github: "membraneframework/membrane-caps-rtp", branch: "initial-caps-and-packet"}
+       github: "membraneframework/membrane-caps-rtp", branch: "initial-caps-and-packet"},
+      {:bunch, "~> 0.2", override: true}
     ]
   end
 end
