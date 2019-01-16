@@ -1,22 +1,18 @@
-defmodule Membrane.Element.RTP.JitterBuffer.Cache.CacheRecord do
+defmodule Membrane.Element.RTP.JitterBuffer.BufferStore.Record do
   @moduledoc """
-  Describes a structure that is stored in the Cache.
+  Describes a structure that is stored in the BufferStore.
   """
-  alias Membrane.Element.RTP.JitterBuffer.Types
+  alias Membrane.Element.RTP.JitterBuffer
   @enforce_keys [:seq_num, :buffer]
   defstruct @enforce_keys
 
   @type t :: %__MODULE__{
-          seq_num: Types.sequence_number(),
+          seq_num: JitterBuffer.sequence_number(),
           buffer: Membrane.Buffer.t()
         }
 
-  @spec new(Membrane.Buffer.t(), Types.sequence_number()) :: t()
-  def new(buffer, seq_num),
-    do: %__MODULE__{
-      seq_num: seq_num,
-      buffer: buffer
-    }
+  @spec new(Membrane.Buffer.t(), JitterBuffer.sequence_number()) :: t()
+  def new(buffer, seq_num), do: %__MODULE__{seq_num: seq_num, buffer: buffer}
 
   @doc """
   Compares two records.

@@ -3,9 +3,9 @@ defmodule Membrane.Element.RTP.JitterBuffer do
   Element that buffers and reorders RTP packets based on sequence_number.
   """
   use Membrane.Element.Base.Filter
+  use Bunch
   alias Membrane.Event.EndOfStream
-  alias Membrane.Element.RTP.JitterBuffer.Cache
-  alias Membrane.Element.RTP.JitterBuffer.Cache.CacheRecord
+  alias Membrane.Element.RTP.JitterBuffer.BufferStore
   alias Membrane.Caps.RTP, as: Caps
 
   @type sequence_number :: 0..65_535
@@ -32,10 +32,10 @@ defmodule Membrane.Element.RTP.JitterBuffer do
   defmodule State do
     @moduledoc false
     @enforce_keys [:slot_count]
-    defstruct cache: %Cache{}, slot_count: 0
+    defstruct store: %BufferStore{}, slot_count: 0
 
     @type t :: %__MODULE__{
-            cache: Cache.t(),
+            store: BufferStore.t(),
             slot_count: pos_integer()
           }
   end
@@ -44,31 +44,27 @@ defmodule Membrane.Element.RTP.JitterBuffer do
   def handle_init(%__MODULE__{slot_count: slot_count}),
     do: {:ok, %State{slot_count: slot_count}}
 
-  def handle_demand(:output, size, _units, _ctx, state) do
+  def handle_demand(:output, size, :buffers, _ctx, state) do
     {{:ok, demand: {:input, size}}, state}
   end
 
   @impl true
   def handle_event(pad, event, context, state)
 
-  def handle_event(_, %EndOfStream{}, _context, %State{cache: cache} = state) do
-    actions =
-      cache
-      |> Cache.dump()
-      |> Enum.flat_map(fn %Cache.CacheRecord{buffer: buffer} ->
-        [buffer: {:output, buffer}]
-      end)
-
-    {{:ok, actions}, state}
+  def handle_event(_, %EndOfStream{}, _context, %State{store: store} = state) do
+    store
+    |> BufferStore.dump()
+    |> Enum.map(fn %BufferStore.Record{buffer: buffer} -> buffer end)
+    ~> {{:ok, [buffer: {:output, &1}]}, %State{state | store: %BufferStore{}}}
   end
 
   def handle_event(_, _, _, state), do: {:ok, state}
 
   @impl true
-  def handle_process(:input, buffer, _context, %State{cache: cache} = state) do
-    case Cache.insert_buffer(cache, buffer) do
+  def handle_process(:input, buffer, _context, %State{store: store} = state) do
+    case BufferStore.insert_buffer(store, buffer) do
       {:ok, result} ->
-        state = %State{state | cache: result}
+        state = %State{state | store: result}
 
         if buffer_full?(state) do
           retrieve_buffer(state)
@@ -81,19 +77,19 @@ defmodule Membrane.Element.RTP.JitterBuffer do
     end
   end
 
-  defp retrieve_buffer(%State{cache: cache} = state) do
-    case Cache.get_next_buffer(cache) do
-      {:ok, {%CacheRecord{buffer: out_buffer}, cache}} ->
+  defp retrieve_buffer(%State{store: store} = state) do
+    case BufferStore.get_next_buffer(store) do
+      {:ok, {%BufferStore.Record{buffer: out_buffer}, store}} ->
         action = [{:buffer, {:output, out_buffer}}]
-        {{:ok, action}, %State{state | cache: cache}}
+        {{:ok, action}, %State{state | store: store}}
 
       {:error, :not_present} ->
-        {:ok, updated_cache} = Cache.skip_buffer(cache)
+        {:ok, updated_store} = BufferStore.skip_buffer(store)
         action = [{:event, {:output, %Membrane.Event.Discontinuity{}}}]
-        {{:ok, action}, %State{state | cache: updated_cache}}
+        {{:ok, action}, %State{state | store: updated_store}}
     end
   end
 
-  defp buffer_full?(%State{cache: cache, slot_count: slot_count}),
-    do: Cache.size(cache) >= slot_count
+  defp buffer_full?(%State{store: store, slot_count: slot_count}),
+    do: BufferStore.size(store) >= slot_count
 end
