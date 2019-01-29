@@ -25,6 +25,8 @@ defmodule Membrane.Element.RTP.JitterBufferTest do
     end
 
     test "refuses to add that packet when it comes late", %{state: state} do
+      store = %BufferStore{state.store | prev_seq_num: @base_seq_number}
+      state = %RTPJitterBuffer.State{state | store: store}
       late_buffer = BufferFactory.sample_buffer(@base_seq_number - 2)
       assert {:ok, ^state} = RTPJitterBuffer.handle_process(:input, late_buffer, nil, state)
     end

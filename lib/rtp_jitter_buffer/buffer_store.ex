@@ -3,13 +3,11 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   Store for RTP packets. Packets are stored in `Heap` ordered by sequence number.
 
   ## Fields
-    - `rollover` - contains buffers waiting for rollover to happen and get inserted into the heap
-    - `heap - contains` records containing buffers
+    - `rollover` - contains buffers waiting for rollover to happen
+    - `heap` - contains records containing buffers
     - `prev_seq_num` - sequence number of the last packet that has been served
     - `end_seq_num` - sequence number of the oldest packet inserted into the store
 
-  Store is considered initialized when at least one record has been inserted.
-  When a store is uninitialized it can only receive records.
   """
   use Bunch
   alias Membrane.Element.RTP.JitterBuffer
@@ -44,10 +42,8 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   @doc """
   Inserts buffer into the Store.
 
-  When Store is uninitialized it will accept any buffer as if it arrived on time.
-
-  Every subsequent buffer must have sequence number bigger then previous one
-  or be part of rollover.
+  Every subsequent buffer must have sequence number Bigger than the previously returned
+  one or be part of rollover.
   """
   @spec insert_buffer(t(), Buffer.t()) :: {:ok, t()} | {:error, insert_error()}
   def insert_buffer(store, %Buffer{metadata: %{rtp: %{sequence_number: seq_num}}} = buffer),
@@ -65,6 +61,11 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   def size(store)
   def size(%__MODULE__{heap: %Heap{data: nil}, rollover: nil}), do: 0
 
+  def size(%__MODULE__{prev_seq_num: nil, end_seq_num: last, rollover: rollover, heap: heap}) do
+    size = if Heap.size(heap) == 1, do: 1, else: last - Heap.root(heap).seq_num + 1
+    size + rollover_size(rollover)
+  end
+
   def size(store) do
     %__MODULE__{prev_seq_num: prev_seq_num, end_seq_num: end_seq_num, rollover: rollover} = store
     heap_size(prev_seq_num, end_seq_num) + rollover_size(rollover)
@@ -78,6 +79,12 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   @spec get_next_buffer(t) :: {:ok, {__MODULE__.Record.t(), t}} | {:error, get_buffer_error()}
   def get_next_buffer(store)
   def get_next_buffer(%__MODULE__{heap: %Heap{data: nil}}), do: {:error, :not_present}
+
+  def get_next_buffer(%__MODULE__{prev_seq_num: nil, heap: heap} = store) do
+    {record, updated_heap} = Heap.split(heap)
+
+    {:ok, {record, %__MODULE__{store | heap: updated_heap, prev_seq_num: record.seq_num}}}
+  end
 
   def get_next_buffer(%__MODULE__{prev_seq_num: prev_seq_num, heap: heap} = store) do
     %__MODULE__.Record{seq_num: seq_num} = Heap.root(heap)
@@ -99,8 +106,6 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
 
   @doc """
   Skips buffer.
-
-  If store is uninitialized returns error.
   """
   @spec skip_buffer(t) :: {:ok, t} | {:error}
   def skip_buffer(store)
@@ -120,10 +125,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   @spec do_insert_buffer(t(), Buffer.t(), JitterBuffer.sequence_number()) ::
           {:ok, t()} | {:error, insert_error()}
   defp do_insert_buffer(%__MODULE__{prev_seq_num: nil} = store, buffer, seq_num) do
-    updated_store =
-      %__MODULE__{store | prev_seq_num: seq_num - 1}
-      |> add_to_heap(__MODULE__.Record.new(buffer, seq_num))
-
+    updated_store = add_to_heap(store, __MODULE__.Record.new(buffer, seq_num))
     {:ok, updated_store}
   end
 
@@ -157,7 +159,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   end
 
   defp add_to_rollover(%__MODULE__{rollover: nil} = store, %Buffer{} = buffer),
-    do: add_to_rollover(%__MODULE__{store | rollover: %__MODULE__{prev_seq_num: -1}}, buffer)
+    do: add_to_rollover(%__MODULE__{store | rollover: %__MODULE__{}}, buffer)
 
   defp add_to_rollover(%__MODULE__{rollover: rollover} = store, %Buffer{} = buffer) do
     rollover
@@ -168,16 +170,12 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   defp pour_rollover(%__MODULE__{rollover: rollover}),
     do: rollover
 
+  defp pour_rollover(%__MODULE__{}), do: %__MODULE__{}
+
   defp calc_next_seq_num(seq_number), do: (seq_number + 1) |> rem(@max_seq_number + 1)
 
   defp bump_prev_seq_num(store, next_seq_num)
-
-  defp bump_prev_seq_num(store, @max_seq_number) do
-    store
-    |> pour_rollover()
-    ~> %__MODULE__{&1 | prev_seq_num: @max_seq_number}
-  end
-
+  defp bump_prev_seq_num(store, @max_seq_number), do: pour_rollover(store)
   defp bump_prev_seq_num(store, next_seq_num), do: %__MODULE__{store | prev_seq_num: next_seq_num}
 
   defp update_end_seq_num(%__MODULE__{end_seq_num: last} = store, added_seq_num)

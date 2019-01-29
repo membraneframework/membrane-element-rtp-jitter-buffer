@@ -1,5 +1,6 @@
 defmodule Membrane.Element.RTP.JitterBuffer.BufferStoreTest do
   use ExUnit.Case
+  use Bunch
 
   alias Membrane.Element.RTP.JitterBuffer.{BufferStore, BufferStoreHelper}
   alias Membrane.Test.BufferFactory
@@ -12,7 +13,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStoreTest do
   end
 
   describe "When adding buffer to the BufferStore it" do
-    test "accepts first buffer" do
+    test "accepts first buffer and does not initiate" do
       buffer = BufferFactory.sample_buffer(@base_seq_num)
 
       assert {:ok, updated_store} = BufferStore.insert_buffer(%BufferStore{}, buffer)
@@ -64,7 +65,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStoreTest do
       ]
     end
 
-    test "returns the root buffer", %{store: store, buffer: buffer} do
+    test "returns the root buffer and initializes it", %{store: store, buffer: buffer} do
       assert {:ok, {record, empty_store}} = BufferStore.get_next_buffer(store)
       assert record.buffer == buffer
       assert empty_store.heap.size == 0
@@ -106,6 +107,18 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStoreTest do
       combined_store = enum_into_store(combined, store)
 
       Enum.reduce(combined, combined_store, fn elem, store ->
+        {:ok, {record, store}} = BufferStore.get_next_buffer(store)
+        assert %BufferStore.Record{seq_num: ^elem} = record
+        store
+      end)
+    end
+
+    test "handles empty rollover", %{base_store: base_store} do
+      store = %BufferStore{base_store | prev_seq_num: 65_533}
+      base_data = Enum.into(65_534..65_535, [])
+      store = enum_into_store(base_data, store)
+
+      Enum.reduce(base_data, store, fn elem, store ->
         {:ok, {record, store}} = BufferStore.get_next_buffer(store)
         assert %BufferStore.Record{seq_num: ^elem} = record
         store
@@ -165,6 +178,24 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStoreTest do
         |> BufferStore.insert_buffer(buffer)
 
       assert BufferStore.size(store) == 20
+    end
+
+    test "if store is not initialized and heap has exactly one element returns 1" do
+      {:ok, store} = %BufferStore{} |> BufferStore.insert_buffer(BufferFactory.sample_buffer(2))
+      assert BufferStore.size(store) == 1
+    end
+
+    test "if store is not initialized and heap has more than one element return proper size" do
+      wanted_size = 10
+      next_seq_num = @base_seq_num + wanted_size - 1
+
+      {:ok, store} =
+        %BufferStore{}
+        |> BufferStore.insert_buffer(BufferFactory.sample_buffer(@base_seq_num))
+        ~> ({:ok, store} ->
+              BufferStore.insert_buffer(store, BufferFactory.sample_buffer(next_seq_num)))
+
+      assert BufferStore.size(store) == wanted_size
     end
   end
 
