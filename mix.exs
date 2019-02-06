@@ -2,7 +2,7 @@ defmodule Membrane.Element.RtpJitterBuffer.MixProject do
   use Mix.Project
 
   @version "0.1.0"
-  @github_url "https://github.com/membraneframework/membrane-element-rtp_jitter_buffer"
+  @github_url "https://github.com/membraneframework/membrane-element-rtp-jitter-buffer"
 
   def project do
     [
@@ -11,9 +11,9 @@ defmodule Membrane.Element.RtpJitterBuffer.MixProject do
       elixir: "~> 1.7",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
-      description: "Membrane Multimedia Framework (RtpJitterBuffer Element)",
+      description: "Membrane Multimedia Framework (RTP JitterBuffer Element)",
       package: package(),
-      name: "Membrane Element: RtpJitterBuffer",
+      name: "Membrane Element: RTP JitterBuffer",
       source_url: @github_url,
       docs: docs(),
       homepage_url: "https://membraneframework.org",
