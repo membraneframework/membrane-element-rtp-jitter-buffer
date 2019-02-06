@@ -158,24 +158,22 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
     end
   end
 
-  defp add_to_rollover(%__MODULE__{rollover: nil} = store, %Buffer{} = buffer),
-    do: add_to_rollover(%__MODULE__{store | rollover: %__MODULE__{}}, buffer)
-
-  defp add_to_rollover(%__MODULE__{rollover: rollover} = store, %Buffer{} = buffer) do
-    rollover
+  defp add_to_rollover(%__MODULE__{} = store, %Buffer{} = buffer) do
+    store
+    |> extract_rollover()
     |> insert_buffer(buffer)
-    ~>> ({:ok, result} -> %__MODULE__{store | rollover: result})
+    ~> ({:ok, result} -> %__MODULE__{store | rollover: result})
   end
 
-  defp pour_rollover(%__MODULE__{rollover: rollover}),
+  defp extract_rollover(%__MODULE__{rollover: %__MODULE__{} = rollover}),
     do: rollover
 
-  defp pour_rollover(%__MODULE__{}), do: %__MODULE__{}
+  defp extract_rollover(%__MODULE__{}), do: %__MODULE__{}
 
   defp calc_next_seq_num(seq_number), do: (seq_number + 1) |> rem(@max_seq_number + 1)
 
   defp bump_prev_seq_num(store, next_seq_num)
-  defp bump_prev_seq_num(store, @max_seq_number), do: pour_rollover(store)
+  defp bump_prev_seq_num(store, @max_seq_number), do: extract_rollover(store)
   defp bump_prev_seq_num(store, next_seq_num), do: %__MODULE__{store | prev_seq_num: next_seq_num}
 
   defp update_end_seq_num(%__MODULE__{end_seq_num: last} = store, added_seq_num)
