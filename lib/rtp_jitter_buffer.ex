@@ -44,21 +44,20 @@ defmodule Membrane.Element.RTP.JitterBuffer do
   def handle_init(%__MODULE__{slot_count: slot_count}),
     do: {:ok, %State{slot_count: slot_count}}
 
+  @impl true
   def handle_demand(:output, size, :buffers, _ctx, state) do
     {{:ok, demand: {:input, size}}, state}
   end
 
   @impl true
-  def handle_event(pad, event, context, state)
-
-  def handle_event(_, %EndOfStream{}, _context, %State{store: store} = state) do
+  def handle_event(:input, %EndOfStream{}, _context, %State{store: store} = state) do
     store
     |> BufferStore.dump()
     |> Enum.map(fn %BufferStore.Record{buffer: buffer} -> buffer end)
     ~> {{:ok, [buffer: {:output, &1}]}, %State{state | store: %BufferStore{}}}
   end
 
-  def handle_event(_, _, _, state), do: {:ok, state}
+  def handle_event(_pad, _event, _context, state), do: {:ok, state}
 
   @impl true
   def handle_process(:input, buffer, _context, %State{store: store} = state) do
@@ -80,12 +79,12 @@ defmodule Membrane.Element.RTP.JitterBuffer do
   defp retrieve_buffer(%State{store: store} = state) do
     case BufferStore.get_next_buffer(store) do
       {:ok, {%BufferStore.Record{buffer: out_buffer}, store}} ->
-        action = [{:buffer, {:output, out_buffer}}]
+        action = [buffer: {:output, out_buffer}]
         {{:ok, action}, %State{state | store: store}}
 
       {:error, :not_present} ->
         {:ok, updated_store} = BufferStore.skip_buffer(store)
-        action = [{:event, {:output, %Membrane.Event.Discontinuity{}}}]
+        action = [event: {:output, %Membrane.Event.Discontinuity{}}]
         {{:ok, action}, %State{state | store: updated_store}}
     end
   end
