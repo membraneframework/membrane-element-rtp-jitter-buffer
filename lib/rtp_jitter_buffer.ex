@@ -68,7 +68,7 @@ defmodule Membrane.Element.RTP.JitterBuffer do
         if buffer_full?(state) do
           retrieve_buffer(state)
         else
-          {:ok, state}
+          {{:ok, redemand: :output}, state}
         end
 
       {:error, _reason} ->

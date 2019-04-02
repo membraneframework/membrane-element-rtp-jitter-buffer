@@ -5,10 +5,10 @@ defmodule Membrane.Element.RTP.JitterBuffer.PipelineTest do
   alias Membrane.Test.BufferFactory
   alias Membrane.Element.RTP.JitterBuffer, as: RTPJitterBuffer
 
-  @last_number 100
+  @last_number 1000
 
   test "Jitter Buffer works in a Pipeline" do
-    buffer_size = 10
+    buffer_size = 100
 
     {:ok, pipeline} =
       Testing.Pipeline.start_link(%Testing.Pipeline.Options{
