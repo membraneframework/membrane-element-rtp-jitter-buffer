@@ -19,7 +19,9 @@ defmodule Membrane.Element.RTP.JitterBufferTest do
 
   describe "When new packet comes Jitter Buffer" do
     test "adds that packet to buffer when it comes on time", %{state: state, buffer: buffer} do
-      assert {:ok, state} = RTPJitterBuffer.handle_process(:input, buffer, nil, state)
+      assert {{:ok, redemand: :output}, state} =
+               RTPJitterBuffer.handle_process(:input, buffer, nil, state)
+
       assert %RTPJitterBuffer.State{store: store} = state
       assert {:ok, {%BufferStore.Record{buffer: ^buffer}, _}} = BufferStore.get_next_buffer(store)
     end
