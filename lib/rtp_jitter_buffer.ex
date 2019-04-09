@@ -11,14 +11,12 @@ defmodule Membrane.Element.RTP.JitterBuffer do
   @type sequence_number :: 0..65_535
   @type timestamp :: pos_integer()
 
-  def_output_pads output: [
-                    caps: Caps
-                  ]
+  def_output_pad :output,
+    caps: Caps
 
-  def_input_pads input: [
-                   caps: Caps,
-                   demand_unit: :buffers
-                 ]
+  def_input_pad :input,
+    caps: Caps,
+    demand_unit: :buffers
 
   def_options slot_count: [
                 type: :number,
