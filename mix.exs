@@ -57,8 +57,8 @@ defmodule Membrane.Element.RtpJitterBuffer.MixProject do
       {:membrane_core, "~> 0.3"},
       {:ex_doc, "~> 0.19", only: :dev, runtime: false},
       {:dialyxir, "~> 1.0.0-rc.4", only: [:dev], runtime: false},
-      {:heap, git: "https://gitlab.com/Hajto/heap.git", branch: "dialyzer-fix"},
-      {:membrane_caps_rtp, github: "membraneframework/membrane-caps-rtp"},
+      {:heap, "~> 2.0.2"},
+      {:membrane_caps_rtp, "~> 0.1"},
       {:bunch, "~> 1.0"}
     ]
   end
