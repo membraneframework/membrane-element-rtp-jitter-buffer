@@ -1,9 +1,11 @@
 defmodule Membrane.Element.RTP.JitterBuffer.PipelineTest do
   use ExUnit.Case
 
+  import Membrane.Testing.Assertions
+
+  alias Membrane.Element.RTP.JitterBuffer, as: RTPJitterBuffer
   alias Membrane.Testing
   alias Membrane.Test.BufferFactory
-  alias Membrane.Element.RTP.JitterBuffer, as: RTPJitterBuffer
 
   @last_number 1000
 
@@ -13,29 +15,30 @@ defmodule Membrane.Element.RTP.JitterBuffer.PipelineTest do
     {:ok, pipeline} =
       Testing.Pipeline.start_link(%Testing.Pipeline.Options{
         elements: [
-          source: %Testing.Source{actions_generator: generate_buffer(buffer_size)},
+          source: %Testing.Source{output: {1, generate_buffer(buffer_size)}},
           buffer: %RTPJitterBuffer{slot_count: buffer_size},
-          sink: %Testing.Sink{target: self()}
+          sink: %Testing.Sink{}
         ]
       })
 
     Membrane.Pipeline.play(pipeline)
+    assert_pipeline_playback_changed(pipeline, _, :playing)
 
     Enum.each(1..(@last_number - 1), fn elem ->
-      assert_receive %Membrane.Buffer{
-                       metadata: %{rtp: %{sequence_number: ^elem, timestamp: _}},
-                       payload: _
-                     },
-                     5000
+      assert_sink_buffer(
+        pipeline,
+        :sink,
+        %Membrane.Buffer{
+          metadata: %{rtp: %{sequence_number: ^elem, timestamp: _}},
+          payload: _
+        },
+        5000
+      )
     end)
   end
 
   def generate_buffer(buffer_size) do
     fn
-      0, size ->
-        {actions, cnt} = generate_buffer(buffer_size).(2, size - 1)
-        {[action_from_number(1) | actions], cnt}
-
       cnt, _ when cnt > @last_number ->
         {[], cnt}
 

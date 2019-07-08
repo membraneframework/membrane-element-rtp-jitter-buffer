@@ -54,7 +54,8 @@ defmodule Membrane.Element.RtpJitterBuffer.MixProject do
 
   defp deps do
     [
-      {:membrane_core, "~> 0.3"},
+      {:membrane_core,
+      github: "membraneframework/membrane-core", branch: "new-testing-api"},
       {:ex_doc, "~> 0.19", only: :dev, runtime: false},
       {:dialyxir, "~> 1.0.0-rc.4", only: [:dev], runtime: false},
       {:heap, "~> 2.0.2"},
