@@ -2,7 +2,7 @@ defmodule Membrane.Element.RTP.JitterBuffer do
   @doc """
   Element that buffers and reorders RTP packets based on sequence_number.
   """
-  use Membrane.Element.Base.Filter
+  use Membrane.Filter
   use Bunch
   alias Membrane.Event.EndOfStream
   alias Membrane.Element.RTP.JitterBuffer.BufferStore

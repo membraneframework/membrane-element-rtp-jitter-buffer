@@ -8,7 +8,7 @@
   "makeup": {:hex, :makeup, "0.8.0", "9cf32aea71c7fe0a4b2e9246c2c4978f9070257e5c9ce6d4a28ec450a839b55f", [:mix], [{:nimble_parsec, "~> 0.5.0", [hex: :nimble_parsec, repo: "hexpm", optional: false]}], "hexpm"},
   "makeup_elixir": {:hex, :makeup_elixir, "0.13.0", "be7a477997dcac2e48a9d695ec730b2d22418292675c75aa2d34ba0909dcdeda", [:mix], [{:makeup, "~> 0.8", [hex: :makeup, repo: "hexpm", optional: false]}], "hexpm"},
   "membrane_caps_rtp": {:hex, :membrane_caps_rtp, "0.1.0", "a6fcdac65d81c4a59d068c7b18fa90a0dc27b2ca21261e279c97dd3fea80ce55", [:mix], [], "hexpm"},
-  "membrane_core": {:git, "https://github.com/membraneframework/membrane-core.git", "2b362f862cc9b8344276a94264e0e63dd64bc472", [branch: "new-testing-api"]},
+  "membrane_core": {:git, "https://github.com/membraneframework/membrane-core.git", "f1b72b345716b54add4324c81e52f37831143b9d", []},
   "nimble_parsec": {:hex, :nimble_parsec, "0.5.0", "90e2eca3d0266e5c53f8fbe0079694740b9c91b6747f2b7e3c5d21966bba8300", [:mix], [], "hexpm"},
   "qex": {:hex, :qex, "0.5.0", "5a3a9becf67d4006377c4c247ffdaaa8ae5b3634a0caadb788dc24d6125068f4", [:mix], [], "hexpm"},
 }
