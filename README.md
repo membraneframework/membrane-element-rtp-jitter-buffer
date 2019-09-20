@@ -1,5 +1,7 @@
 # Membrane Multimedia Framework: RTP JitterBuffer
 
+[![CircleCI](https://circleci.com/gh/membraneframework/membrane-element-rtp-jitter-buffer.svg?style=svg)](https://circleci.com/gh/membraneframework/membrane-element-rtp-jitter-buffer)
+
 This package provides elements that can be used for buffering incoming packets
 to reduce network jitter.
 

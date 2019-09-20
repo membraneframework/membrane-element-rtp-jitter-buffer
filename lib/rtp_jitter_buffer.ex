@@ -4,7 +4,6 @@ defmodule Membrane.Element.RTP.JitterBuffer do
   """
   use Membrane.Filter
   use Bunch
-  alias Membrane.Event.EndOfStream
   alias Membrane.Element.RTP.JitterBuffer.BufferStore
   alias Membrane.Caps.RTP, as: Caps
 
@@ -48,14 +47,12 @@ defmodule Membrane.Element.RTP.JitterBuffer do
   end
 
   @impl true
-  def handle_event(:input, %EndOfStream{}, _context, %State{store: store} = state) do
+  def handle_end_of_stream(:input, _context, %State{store: store} = state) do
     store
     |> BufferStore.dump()
     |> Enum.map(fn %BufferStore.Record{buffer: buffer} -> buffer end)
     ~> {{:ok, [buffer: {:output, &1}]}, %State{state | store: %BufferStore{}}}
   end
-
-  def handle_event(_pad, _event, _context, state), do: {:ok, state}
 
   @impl true
   def handle_process(:input, buffer, _context, %State{store: store} = state) do

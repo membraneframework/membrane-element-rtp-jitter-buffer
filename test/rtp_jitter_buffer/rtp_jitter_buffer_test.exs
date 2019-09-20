@@ -63,8 +63,7 @@ defmodule Membrane.Element.RTP.JitterBufferTest do
 
   describe "When event arrives" do
     test "dumps store if event was end of stream", %{state: state, buffer: buffer} do
-      assert {{:ok, actions}, r_state} =
-               RTPJitterBuffer.handle_event(:input, %Membrane.Event.EndOfStream{}, nil, state)
+      assert {{:ok, actions}, r_state} = RTPJitterBuffer.handle_end_of_stream(:input, nil, state)
 
       assert Keyword.fetch!(actions, :buffer) == {:output, [buffer]}
     end

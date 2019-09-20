@@ -1,7 +1,7 @@
 defmodule Membrane.Element.RtpJitterBuffer.MixProject do
   use Mix.Project
 
-  @version "0.1.0"
+  @version "0.1.1"
   @github_url "https://github.com/membraneframework/membrane-element-rtp-jitter-buffer"
 
   def project do
@@ -54,7 +54,7 @@ defmodule Membrane.Element.RtpJitterBuffer.MixProject do
 
   defp deps do
     [
-      {:membrane_core, github: "membraneframework/membrane-core"},
+      {:membrane_core, "~> 0.4.0"},
       {:ex_doc, "~> 0.19", only: :dev, runtime: false},
       {:dialyxir, "~> 1.0.0-rc.4", only: [:dev], runtime: false},
       {:heap, "~> 2.0.2"},
