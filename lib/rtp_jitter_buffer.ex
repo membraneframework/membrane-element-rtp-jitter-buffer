@@ -51,7 +51,8 @@ defmodule Membrane.Element.RTP.JitterBuffer do
     store
     |> BufferStore.dump()
     |> Enum.map(fn %BufferStore.Record{buffer: buffer} -> buffer end)
-    ~> {{:ok, [buffer: {:output, &1}]}, %State{state | store: %BufferStore{}}}
+    ~> {{:ok, [buffer: {:output, &1}, end_of_stream: :output]},
+     %State{state | store: %BufferStore{}}}
   end
 
   @impl true
