@@ -14,7 +14,7 @@ The package can be installed by adding `membrane_element_rtp_jitter_buffer` to y
 ```elixir
 def deps do
   [
-    {:membrane_element_rtp_jitter_buffer, "~> 0.1.0"}
+    {:membrane_element_rtp_jitter_buffer, "~> 0.2.0"}
   ]
 end
 ```
