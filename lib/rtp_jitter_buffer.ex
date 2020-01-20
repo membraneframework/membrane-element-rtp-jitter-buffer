@@ -7,6 +7,8 @@ defmodule Membrane.Element.RTP.JitterBuffer do
   alias Membrane.Element.RTP.JitterBuffer.BufferStore
   alias Membrane.Caps.RTP, as: Caps
 
+  use Membrane.Log
+
   @type sequence_number :: 0..65_535
   @type timestamp :: pos_integer()
 
@@ -42,9 +44,8 @@ defmodule Membrane.Element.RTP.JitterBuffer do
     do: {:ok, %State{slot_count: slot_count}}
 
   @impl true
-  def handle_demand(:output, size, :buffers, _ctx, state) do
-    {{:ok, demand: {:input, size}}, state}
-  end
+  def handle_demand(:output, size, :buffers, _ctx, state),
+    do: {{:ok, demand: {:input, size}}, state}
 
   @impl true
   def handle_end_of_stream(:input, _context, %State{store: store} = state) do
@@ -67,7 +68,8 @@ defmodule Membrane.Element.RTP.JitterBuffer do
           {{:ok, redemand: :output}, state}
         end
 
-      {:error, _reason} ->
+      {:error, reason} ->
+        warn("Buffer store returned a problem that was ignored: #{inspect(reason)}")
         {:ok, state}
     end
   end
@@ -80,7 +82,7 @@ defmodule Membrane.Element.RTP.JitterBuffer do
 
       {:error, :not_present} ->
         {:ok, updated_store} = BufferStore.skip_buffer(store)
-        action = [event: {:output, %Membrane.Event.Discontinuity{}}]
+        action = [event: {:output, %Membrane.Event.Discontinuity{}}, redemand: :output]
         {{:ok, action}, %State{state | store: updated_store}}
     end
   end
