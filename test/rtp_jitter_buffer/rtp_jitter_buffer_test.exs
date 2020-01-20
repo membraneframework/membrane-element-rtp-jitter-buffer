@@ -30,7 +30,9 @@ defmodule Membrane.Element.RTP.JitterBufferTest do
       store = %BufferStore{state.store | prev_seq_num: @base_seq_number}
       state = %RTPJitterBuffer.State{state | store: store}
       late_buffer = BufferFactory.sample_buffer(@base_seq_number - 2)
-      assert {:ok, ^state} = RTPJitterBuffer.handle_process(:input, late_buffer, nil, state)
+
+      assert {{:ok, redemand: :output}, ^state} =
+               RTPJitterBuffer.handle_process(:input, late_buffer, nil, state)
     end
 
     test "adds it and when buffer is full returns one buffer", %{state: state} do

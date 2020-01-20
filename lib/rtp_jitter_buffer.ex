@@ -68,9 +68,9 @@ defmodule Membrane.Element.RTP.JitterBuffer do
           {{:ok, redemand: :output}, state}
         end
 
-      {:error, reason} ->
-        warn("Buffer store returned a problem that was ignored: #{inspect(reason)}")
-        {:ok, state}
+      {:error, :late_packet} ->
+        warn("Late packet has arrived")
+        {{:ok, redemand: :output}, state}
     end
   end
 
