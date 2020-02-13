@@ -3,13 +3,17 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStoreHelper do
   alias Membrane.Element.RTP.JitterBuffer.BufferStore
 
   @spec has_buffer(BufferStore.t(), Membrane.Buffer.t()) :: boolean()
-  def has_buffer(%BufferStore{heap: heap}, buffer) do
-    %Membrane.Buffer{metadata: %{rtp: %{sequence_number: seq_num}}} = buffer
-    record = BufferStore.Record.new(buffer, seq_num)
-    Heap.member?(heap, record)
-  end
+  def has_buffer(
+        %BufferStore{} = store,
+        %Membrane.Buffer{metadata: %{rtp: %{sequence_number: seq_num}}} = buffer
+      ),
+      do: has_buffer_with_index(store, seq_num)
 
-  @spec has_buffer_with_seq_num(BufferStore.t(), pos_integer()) :: boolean()
-  def has_buffer_with_seq_num(store, seq_num) when is_number(seq_num),
-    do: has_buffer(store, Membrane.Test.BufferFactory.sample_buffer(seq_num))
+  @spec has_buffer_with_index(BufferStore.t(), Membrane.Buffer.t()) :: boolean()
+  def has_buffer_with_index(%BufferStore{heap: heap}, index) when is_integer(index) do
+    heap
+    |> Enum.to_list()
+    |> Enum.map(& &1.buffer.metadata.rtp.sequence_number)
+    |> Enum.member?(index)
+  end
 end

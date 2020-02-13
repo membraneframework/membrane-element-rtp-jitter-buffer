@@ -9,6 +9,7 @@ defmodule Membrane.Element.RTP.JitterBuffer do
 
   use Membrane.Log
 
+  @type packet_index :: non_neg_integer()
   @type sequence_number :: 0..65_535
   @type timestamp :: pos_integer()
 
