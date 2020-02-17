@@ -27,16 +27,31 @@ defmodule Membrane.Element.RTP.JitterBuffer do
                 Number of slots for buffers. Each time last slot is filled `JitterBuffer`
                 will send buffer through `:output` pad.
                 """
+              ],
+              max_delay: [
+                spec: non_neg_integer() | nil,
+                default: nil,
+                description: """
+                Approximate of the highest acceptable delay for a packet. It serves as an
+                alternative to slot count when a transmitting live data. Please not that a small
+                enough max delay makes the slot count irrelevant. Expressed in nanoseconds since
+                insertion time.
+                """
               ]
 
   defmodule State do
     @moduledoc false
     @enforce_keys [:slot_count]
-    defstruct store: %BufferStore{}, slot_count: 0
+    defstruct store: %BufferStore{},
+              slot_count: 0,
+              interarrival_jitter: 0,
+              max_delay: 0
 
     @type t :: %__MODULE__{
             store: BufferStore.t(),
-            slot_count: pos_integer()
+            slot_count: pos_integer(),
+            interarrival_jitter: non_neg_integer(),
+            max_delay: non_neg_integer()
           }
   end
 

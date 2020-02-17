@@ -8,15 +8,22 @@ defmodule Membrane.Element.RTP.JitterBuffer.PipelineTest do
   alias Membrane.Test.BufferFactory
 
   @last_number 1000
+  @buffer_size 100
 
   test "Jitter Buffer works in a Pipeline" do
-    buffer_size = 100
+    test_pipeline(nil, false)
+  end
 
+  test "Jitter Buffer outputs the entire store" do
+    test_pipeline(500_000, true)
+  end
+
+  defp test_pipeline(delay, simple) do
     {:ok, pipeline} =
       Testing.Pipeline.start_link(%Testing.Pipeline.Options{
         elements: [
-          source: %Testing.Source{output: {1, generate_buffer(buffer_size)}},
-          buffer: %RTPJitterBuffer{slot_count: buffer_size},
+          source: %Testing.Source{output: {1, generate_buffer(simple)}},
+          buffer: %RTPJitterBuffer{max_delay: delay, slot_count: @buffer_size},
           sink: %Testing.Sink{}
         ]
       })
@@ -37,7 +44,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.PipelineTest do
     end)
   end
 
-  def generate_buffer(buffer_size) do
+  defp generate_buffer(simple) do
     fn
       cnt, _ when cnt > @last_number ->
         {[], cnt}
@@ -49,14 +56,22 @@ defmodule Membrane.Element.RTP.JitterBuffer.PipelineTest do
         range = cnt..(cnt + size) |> trunc_range()
         _..last_element = range
 
-        actions =
-          range
-          # Introduces slight variation in buffer order
-          |> Enum.chunk_every(round(buffer_size / 2))
-          |> Enum.flat_map(&Enum.shuffle/1)
-          |> Enum.map(&action_from_number/1)
+        if simple do
+          actions =
+            range
+            # Introduces slight variation in buffer order
+            |> Enum.chunk_every(round(@buffer_size / 2))
+            |> Enum.flat_map(&Enum.shuffle/1)
+            |> Enum.map(&action_from_number/1)
 
-        {actions, last_element}
+          {actions, last_element + 1}
+        else
+          actions =
+            range
+            |> Enum.map(&action_from_number/1)
+
+          {actions, last_element}
+        end
     end
   end
 
