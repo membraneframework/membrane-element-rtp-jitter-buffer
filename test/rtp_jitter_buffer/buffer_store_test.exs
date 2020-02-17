@@ -137,6 +137,21 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStoreTest do
 
       assert BufferStore.size(store) == 10
     end
+
+    test "returns only stale buffers if min_time is given" do
+      store = enum_into_store([1, 2])
+      time = Membrane.Time.os_time()
+      store = enum_into_store([3], store)
+
+      assert {:ok, {%BufferStore.Record{index: 1}, store}} =
+               BufferStore.get_next_buffer(store, time)
+
+      assert {:ok, {%BufferStore.Record{index: 2}, store}} =
+               BufferStore.get_next_buffer(store, time)
+
+      assert {:error, _} = BufferStore.get_next_buffer(store, time)
+      assert {:ok, {%BufferStore.Record{index: 3}, _}} = BufferStore.get_next_buffer(store)
+    end
   end
 
   describe "When skipping buffer it" do

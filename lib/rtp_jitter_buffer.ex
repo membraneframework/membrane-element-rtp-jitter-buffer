@@ -56,8 +56,20 @@ defmodule Membrane.Element.RTP.JitterBuffer do
   end
 
   @impl true
-  def handle_init(%__MODULE__{slot_count: slot_count}),
-    do: {:ok, %State{slot_count: slot_count}}
+  def handle_init(%__MODULE__{slot_count: slot_count, max_delay: max_delay}),
+    do: {:ok, %State{slot_count: slot_count, max_delay: max_delay}}
+
+  @impl true
+  def handle_demand(:output, size, :buffers, _ctx, %State{max_delay: max_delay} = state)
+      when not is_nil(max_delay) do
+    {store, buffers} = retrieve_stale_buffers(state.store, max_delay)
+    lb = length(buffers)
+
+    demands = if lb < size, do: [demand: {:input, size - lb}], else: []
+    buffers = [buffer: {:output, buffers}]
+
+    {{:ok, buffers ++ demands}, %{state | store: store}}
+  end
 
   @impl true
   def handle_demand(:output, size, :buffers, _ctx, state),
@@ -87,6 +99,24 @@ defmodule Membrane.Element.RTP.JitterBuffer do
       {:error, :late_packet} ->
         warn("Late packet has arrived")
         {{:ok, redemand: :output}, state}
+    end
+  end
+
+  defp retrieve_stale_buffers(store, max_delay) do
+    current_time = Membrane.Time.os_time()
+    min_time = current_time - max_delay
+    do_retrieve_stale_buffers(store, min_time, [])
+  end
+
+  defp do_retrieve_stale_buffers(store, min_time, acc) do
+    store
+    |> BufferStore.get_next_buffer(min_time)
+    |> case do
+      {:ok, {%BufferStore.Record{buffer: buffer}, store}} ->
+        do_retrieve_stale_buffers(store, min_time, [buffer | acc])
+
+      {:error, :not_present} ->
+        {store, acc}
     end
   end
 

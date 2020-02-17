@@ -73,6 +73,20 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   end
 
   @doc """
+  Retrieves next buffer if the top element's timestamp is less than given min_time.
+
+  See get_next_buffer/1
+  """
+  def get_next_buffer(store, min_time) do
+    store.heap
+    |> Heap.root()
+    |> case do
+      %__MODULE__.Record{timestamp: time} when time <= min_time -> get_next_buffer(store)
+      _ -> {:error, :not_present}
+    end
+  end
+
+  @doc """
   Retrieves next buffer.
 
   If Store is empty or does not contain next buffer it will return error.
@@ -163,7 +177,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   end
 
   defp add_to_heap(%__MODULE__{heap: heap} = store, %__MODULE__.Record{} = record) do
-    if Heap.member?(heap, record) do
+    if contains_index(heap, record.index) do
       store
     else
       %__MODULE__{store | heap: Heap.push(heap, record)}
@@ -185,6 +199,13 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   defp update_end_index(%__MODULE__{end_index: last} = store, added_index)
        when last >= added_index,
        do: store
+
+  defp contains_index(heap, index) do
+    Enum.reduce_while(heap, false, fn
+      %__MODULE__.Record{index: ^index}, _acc -> {:halt, true}
+      _, _ -> {:cont, false}
+    end)
+  end
 
   defp heap_size(last, ending), do: ending - last
 
