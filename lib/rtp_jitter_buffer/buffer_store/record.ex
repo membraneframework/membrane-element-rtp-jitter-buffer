@@ -12,7 +12,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore.Record do
           buffer: Membrane.Buffer.t()
         }
 
-  @spec new(Membrane.Buffer.t(), JitterBuffer.index()) :: t()
+  @spec new(Membrane.Buffer.t(), JitterBuffer.packet_index()) :: t()
   def new(buffer, index) do
     %__MODULE__{
       index: index,

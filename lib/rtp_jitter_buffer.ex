@@ -29,7 +29,7 @@ defmodule Membrane.Element.RTP.JitterBuffer do
                 """
               ],
               max_delay: [
-                spec: non_neg_integer() | nil,
+                spec: Membrane.Time.t() | nil,
                 default: nil,
                 description: """
                 Approximate of the highest acceptable delay for a packet. It serves as an
@@ -45,13 +45,13 @@ defmodule Membrane.Element.RTP.JitterBuffer do
     defstruct store: %BufferStore{},
               slot_count: 0,
               interarrival_jitter: 0,
-              max_delay: 0
+              max_delay: nil
 
     @type t :: %__MODULE__{
             store: BufferStore.t(),
             slot_count: pos_integer(),
             interarrival_jitter: non_neg_integer(),
-            max_delay: non_neg_integer()
+            max_delay: Membrane.Time.t() | nil
           }
   end
 
@@ -62,13 +62,12 @@ defmodule Membrane.Element.RTP.JitterBuffer do
   @impl true
   def handle_demand(:output, size, :buffers, _ctx, %State{max_delay: max_delay} = state)
       when not is_nil(max_delay) do
-    {store, buffers} = retrieve_stale_buffers(state.store, max_delay)
-    lb = length(buffers)
+    {store, actions} = retrieve_stale_buffers(state.store, max_delay)
+    lb = length(actions)
 
     demands = if lb < size, do: [demand: {:input, size - lb}], else: []
-    buffers = [buffer: {:output, buffers}]
 
-    {{:ok, buffers ++ demands}, %{state | store: store}}
+    {{:ok, actions ++ demands}, %{state | store: store}}
   end
 
   @impl true
@@ -90,11 +89,16 @@ defmodule Membrane.Element.RTP.JitterBuffer do
       {:ok, result} ->
         state = %State{state | store: result}
 
-        if buffer_full?(state) do
-          retrieve_buffer(state)
-        else
-          {{:ok, redemand: :output}, state}
-        end
+        {actions, redemand, state} =
+          if buffer_full?(state) do
+            retrieve_buffer(state)
+          else
+            {[], [redemand: :output], state}
+          end
+
+        {store, stale_actions} = retrieve_stale_buffers(state.store, state.max_delay)
+
+        {{:ok, actions ++ stale_actions ++ redemand}, %{state | store: store}}
 
       {:error, :late_packet} ->
         warn("Late packet has arrived")
@@ -102,34 +106,69 @@ defmodule Membrane.Element.RTP.JitterBuffer do
     end
   end
 
+  @spec retrieve_stale_buffers(BufferStore.t(), Membrane.Time.t() | nil) ::
+          {BufferStore.t(), list()}
+  defp retrieve_stale_buffers(store, nil), do: {store, []}
+
   defp retrieve_stale_buffers(store, max_delay) do
     current_time = Membrane.Time.os_time()
     min_time = current_time - max_delay
-    do_retrieve_stale_buffers(store, min_time, [])
+    {store, actions} = do_retrieve_stale_buffers(store, min_time, [])
+    {store, Enum.reverse(actions)}
   end
 
+  @spec do_retrieve_stale_buffers(BufferStore.t(), Membrane.Time.t(), list()) ::
+          {BufferStore.t(), list()}
   defp do_retrieve_stale_buffers(store, min_time, acc) do
     store
     |> BufferStore.get_next_buffer(min_time)
     |> case do
       {:ok, {%BufferStore.Record{buffer: buffer}, store}} ->
-        do_retrieve_stale_buffers(store, min_time, [buffer | acc])
+        action = {:buffer, {:output, buffer}}
+
+        do_retrieve_stale_buffers(store, min_time, [action | acc])
 
       {:error, :not_present} ->
-        {store, acc}
+        store
+        |> skip_late_stale_buffers(min_time)
+        |> case do
+          {store, []} -> {store, acc}
+          {store, events} -> do_retrieve_stale_buffers(store, min_time, events ++ acc)
+        end
     end
   end
 
+  @spec skip_late_stale_buffers(BufferStore.t(), Membrane.Time.t()) :: {BufferStore.t(), list()}
+  defp skip_late_stale_buffers(store, min_time) do
+    store
+    |> BufferStore.peek_next_buffer(min_time)
+    |> case do
+      %BufferStore.Record{index: index} ->
+        (store.prev_index + 1)..(index - 1)
+        |> Enum.reduce({store, []}, fn _index, {store, acc} ->
+          {:ok, store} = BufferStore.skip_buffer(store)
+          {store, [{:event, {:output, %Membrane.Event.Discontinuity{}}} | acc]}
+        end)
+
+      _ ->
+        {store, []}
+    end
+  end
+
+  @spec retrieve_buffer(State.t()) :: {list(), list(), State.t()}
   defp retrieve_buffer(%State{store: store} = state) do
     case BufferStore.get_next_buffer(store) do
       {:ok, {%BufferStore.Record{buffer: out_buffer}, store}} ->
-        action = [buffer: {:output, out_buffer}]
-        {{:ok, action}, %State{state | store: store}}
+        actions = [buffer: {:output, out_buffer}]
+        {actions, [], %State{state | store: store}}
 
       {:error, :not_present} ->
         {:ok, updated_store} = BufferStore.skip_buffer(store)
-        action = [event: {:output, %Membrane.Event.Discontinuity{}}, redemand: :output]
-        {{:ok, action}, %State{state | store: updated_store}}
+
+        {actions, redemand} =
+          {[event: {:output, %Membrane.Event.Discontinuity{}}], [redemand: :output]}
+
+        {actions, redemand, %State{state | store: updated_store}}
     end
   end
 

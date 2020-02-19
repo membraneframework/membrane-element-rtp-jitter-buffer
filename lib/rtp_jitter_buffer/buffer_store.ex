@@ -122,6 +122,19 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   end
 
   @doc """
+  Returns next buffer if the top element's timestamp is less than given min_time but doesn't
+  remove it from the heap.
+  """
+  def peek_next_buffer(store, min_time) do
+    store.heap
+    |> Heap.root()
+    |> case do
+      %__MODULE__.Record{timestamp: time} = record when time <= min_time -> record
+      _ -> {:error, :not_present}
+    end
+  end
+
+  @doc """
   Skips buffer.
   """
   @spec skip_buffer(t) :: {:ok, t} | {:error}

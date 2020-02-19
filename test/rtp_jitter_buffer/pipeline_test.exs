@@ -15,7 +15,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.PipelineTest do
   end
 
   test "Jitter Buffer outputs the entire store" do
-    test_pipeline(500_000, true)
+    test_pipeline(1, true)
   end
 
   defp test_pipeline(delay, simple) do
@@ -59,15 +59,15 @@ defmodule Membrane.Element.RTP.JitterBuffer.PipelineTest do
         if simple do
           actions =
             range
-            # Introduces slight variation in buffer order
-            |> Enum.chunk_every(round(@buffer_size / 2))
-            |> Enum.flat_map(&Enum.shuffle/1)
             |> Enum.map(&action_from_number/1)
 
           {actions, last_element + 1}
         else
           actions =
             range
+            # Introduces slight variation in buffer order
+            |> Enum.chunk_every(round(@buffer_size / 2))
+            |> Enum.flat_map(&Enum.shuffle/1)
             |> Enum.map(&action_from_number/1)
 
           {actions, last_element}

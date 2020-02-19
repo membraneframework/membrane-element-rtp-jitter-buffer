@@ -107,11 +107,14 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStoreTest do
       combined = Enum.into(before_rollover_indexs, []) ++ Enum.into(after_rollover_indexs, [])
       combined_store = enum_into_store(combined, store)
 
-      Enum.reduce(combined, combined_store, fn elem, store ->
-        {:ok, {record, store}} = BufferStore.get_next_buffer(store)
-        assert %BufferStore.Record{index: ^elem} = record
-        store
-      end)
+      store =
+        Enum.reduce(combined, combined_store, fn elem, store ->
+          {:ok, {record, store}} = BufferStore.get_next_buffer(store)
+          assert %BufferStore.Record{index: ^elem} = record
+          store
+        end)
+
+      assert store.rollover_count == 1
     end
 
     test "handles empty rollover", %{base_store: base_store} do
@@ -136,6 +139,15 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStoreTest do
         |> enum_into_store(store)
 
       assert BufferStore.size(store) == 10
+    end
+
+    test "handles late packets after a rollover" do
+      indexes = [65_535, 0, 65_534]
+      store = enum_into_store(indexes, %BufferStore{prev_index: 65_533})
+
+      Enum.each(indexes, fn _index ->
+        assert {:ok, {_record, store}} = BufferStore.get_next_buffer(store)
+      end)
     end
 
     test "returns only stale buffers if min_time is given" do

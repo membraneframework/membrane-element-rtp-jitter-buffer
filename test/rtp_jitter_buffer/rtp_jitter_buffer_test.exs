@@ -70,4 +70,36 @@ defmodule Membrane.Element.RTP.JitterBufferTest do
       assert Keyword.fetch!(actions, :buffer) == {:output, [buffer]}
     end
   end
+
+  describe "when demanded from" do
+    setup %{state: state} do
+      %{state: %{state | max_delay: 10}}
+    end
+
+    test "it returns stale records", %{state: state, buffer: buffer} do
+      assert {{:ok, actions}, new_state} =
+               RTPJitterBuffer.handle_demand(:output, 4, :buffers, nil, state)
+
+      assert {:input, 3} == actions[:demand]
+      assert {:output, ^buffer} = actions[:buffer]
+    end
+
+    test "it returns discontinuity if a record has been missing for too long", %{state: state} do
+      buffer = BufferFactory.sample_buffer(@base_seq_number + 2, 0)
+
+      assert {{:ok, actions}, new_state} =
+               RTPJitterBuffer.handle_process(:input, buffer, nil, state)
+
+      assert {:output, %Membrane.Event.Discontinuity{}} = actions[:event]
+    end
+
+    test "it doesn't return fresh records", %{state: state} do
+      state = %{state | max_delay: 40_000_000_000}
+
+      assert {{:ok, actions}, new_state} =
+               RTPJitterBuffer.handle_demand(:output, 4, :buffers, nil, state)
+
+      assert {:input, 4} == actions[:demand]
+    end
+  end
 end
