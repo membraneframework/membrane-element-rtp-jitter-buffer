@@ -44,13 +44,11 @@ defmodule Membrane.Element.RTP.JitterBuffer do
     @enforce_keys [:slot_count]
     defstruct store: %BufferStore{},
               slot_count: 0,
-              interarrival_jitter: 0,
               max_delay: nil
 
     @type t :: %__MODULE__{
             store: BufferStore.t(),
             slot_count: pos_integer(),
-            interarrival_jitter: non_neg_integer(),
             max_delay: Membrane.Time.t() | nil
           }
   end

@@ -5,7 +5,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStoreHelper do
   @spec has_buffer(BufferStore.t(), Membrane.Buffer.t()) :: boolean()
   def has_buffer(
         %BufferStore{} = store,
-        %Membrane.Buffer{metadata: %{rtp: %{sequence_number: seq_num}}} = buffer
+        %Membrane.Buffer{metadata: %{rtp: %{sequence_number: seq_num}}}
       ),
       do: has_buffer_with_index(store, seq_num)
 
