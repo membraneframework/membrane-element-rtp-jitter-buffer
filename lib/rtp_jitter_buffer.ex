@@ -2,12 +2,14 @@ defmodule Membrane.Element.RTP.JitterBuffer do
   @doc """
   Element that buffers and reorders RTP packets based on sequence_number.
   """
-  use Membrane.Filter
-  use Bunch
-  alias Membrane.Element.RTP.JitterBuffer.BufferStore
-  alias Membrane.Caps.RTP, as: Caps
 
+  use Bunch
+  use Membrane.Filter
   use Membrane.Log
+
+  alias Membrane.Element.RTP.JitterBuffer.BufferStore
+  alias Membrane.Event.RTCP
+  alias Membrane.Caps.RTP, as: Caps
 
   @type packet_index :: non_neg_integer()
   @type sequence_number :: 0..65_535
@@ -15,6 +17,10 @@ defmodule Membrane.Element.RTP.JitterBuffer do
 
   def_output_pad :output,
     caps: Caps
+
+  def_input_pad :rtcp,
+    caps: :any,
+    demand_unit: :buffers
 
   def_input_pad :input,
     caps: Caps,
@@ -33,22 +39,33 @@ defmodule Membrane.Element.RTP.JitterBuffer do
                 default: nil,
                 description: """
                 Approximate of the highest acceptable delay for a packet. It serves as an
-                alternative to slot count when a transmitting live data. Please not that a small
+                alternative to slot count when a transmitting live data. Please note that a small
                 enough max delay makes the slot count irrelevant. Expressed in nanoseconds since
                 insertion time.
                 """
+              ],
+              clockrate: [
+                spec: non_neg_integer(),
+                default: 8000,
+                description: "Clockrate for the given payload type"
               ]
 
   defmodule State do
     @moduledoc false
     @enforce_keys [:slot_count]
-    defstruct store: %BufferStore{},
-              slot_count: 0,
-              max_delay: nil
+    defstruct [
+      :timing_offset,
+      store: %BufferStore{},
+      slot_count: 0,
+      interarrival_jitter: 0,
+      max_delay: nil
+    ]
 
     @type t :: %__MODULE__{
+            timing_offset: non_neg_integer(),
             store: BufferStore.t(),
             slot_count: pos_integer(),
+            interarrival_jitter: non_neg_integer(),
             max_delay: Membrane.Time.t() | nil
           }
   end
@@ -85,7 +102,10 @@ defmodule Membrane.Element.RTP.JitterBuffer do
   def handle_process(:input, buffer, _context, %State{store: store} = state) do
     case BufferStore.insert_buffer(store, buffer) do
       {:ok, result} ->
-        state = %State{state | store: result}
+        state =
+          state
+          |> Map.put(:store, result)
+          |> update_interarrival_jitter()
 
         {actions, redemand, state} =
           if buffer_full?(state) do
@@ -102,6 +122,21 @@ defmodule Membrane.Element.RTP.JitterBuffer do
         warn("Late packet has arrived")
         {{:ok, redemand: :output}, state}
     end
+  end
+
+  @impl true
+  def handle_event(:rtcp, %RTCP.MetadataRequest{}, _ctx, %State{store: store} = state) do
+    fraction_lost =
+      if store.packets_total != 0, do: store.packets_lost / store.packets_total, else: 0
+
+    metadata = %RTCP.Metadata{
+      fraction_lost: fraction_lost,
+      packets_lost_total: store.packets_lost_total,
+      extended_s_l: BufferStore.last_index(store),
+      interarrival_jitter: 0
+    }
+
+    {{:ok, event: {:rtcp, metadata}}, state}
   end
 
   @spec retrieve_stale_buffers(BufferStore.t(), Membrane.Time.t() | nil) ::
@@ -172,4 +207,10 @@ defmodule Membrane.Element.RTP.JitterBuffer do
 
   defp buffer_full?(%State{store: store, slot_count: slot_count}),
     do: BufferStore.size(store) >= slot_count
+
+  @spec update_interarrival_jitter(State.t()) :: State.t()
+  defp update_interarrival_jitter(%State{interarrival_jitter: current_jitter} = state) do
+    j = 0
+    %{state | interarrival_jitter: div(current_jitter, 15) + j}
+  end
 end

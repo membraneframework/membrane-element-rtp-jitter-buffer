@@ -20,13 +20,19 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   defstruct prev_index: nil,
             end_index: nil,
             heap: Heap.new(&__MODULE__.Record.rtp_comparator/2),
-            rollover_count: 0
+            rollover_count: 0,
+            packets_lost: 0,
+            packets_lost_total: 0,
+            packets_total: 0
 
   @type t :: %__MODULE__{
           prev_index: JitterBuffer.packet_index() | nil,
           end_index: JitterBuffer.packet_index() | nil,
           heap: Heap.t(),
-          rollover_count: non_neg_integer()
+          rollover_count: non_neg_integer(),
+          packets_lost: non_neg_integer(),
+          packets_lost_total: non_neg_integer(),
+          packets_total: non_neg_integer()
         }
 
   @typedoc """
@@ -150,6 +156,15 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   @spec dump(nil | t()) :: [__MODULE__.Record.t()]
   def dump(%__MODULE__{} = store), do: to_list(store)
 
+  @doc """
+  Returns the index of the highest-index buffer.
+  """
+  @spec last_index(Membrane.Element.RTP.JitterBuffer.BufferStore.t()) :: number
+  def last_index(%__MODULE__{end_index: nil}), do: 0
+
+  def last_index(%__MODULE__{rollover_count: roc, end_index: index}),
+    do: roc * @seq_number_limit + index
+
   # Private API
 
   @spec do_insert_buffer(t(), Buffer.t(), JitterBuffer.sequence_number()) ::
@@ -221,6 +236,17 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   end
 
   defp heap_size(last, ending), do: ending - last
+
+  defp count_buffer(store) do
+    Map.update!(store, :packets_total, &(&1 + 1))
+  end
+
+  defp count_lost_buffer(store) do
+    [:packets_lost, :packets_lost_total, :packets_total]
+    |> Enum.reduce(store, fn {store, key} ->
+      Map.update!(store, key, &(&1 + 1))
+    end)
+  end
 
   def to_list(nil), do: []
 
