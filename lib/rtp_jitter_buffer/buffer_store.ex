@@ -15,7 +15,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   alias Membrane.Buffer
 
   @seq_number_limit 65_536
-  @index_rollover_delta 1_500
+  @seq_num_rollover_delta 1_500
 
   defstruct prev_index: nil,
             end_index: nil,
@@ -56,7 +56,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   Size is calculated by counting `slots` between youngest (buffer with
   smallest sequence number) and oldest buffer.
 
-  If Store has buffers [1,2,10] it size would be 10.
+  If Store has buffers [1,2,10] its size would be 10.
   """
   @spec size(__MODULE__.t()) :: number()
   def size(store)
@@ -73,76 +73,64 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   end
 
   @doc """
-  Retrieves next buffer if the top element's timestamp is less than given min_time.
+  Shifts the store to the buffer with the next sequence number.
 
-  See get_next_buffer/1
+  If this buffer is present, it will be returned.
+  Otherwise it will be treated as late and rejected on attempt to insert into the store.
   """
-  def get_next_buffer(store, min_time) do
-    store.heap
-    |> Heap.root()
-    |> case do
-      %__MODULE__.Record{timestamp: time} when time <= min_time -> get_next_buffer(store)
-      _ -> {:error, :not_present}
-    end
-  end
+  @spec shift(t) :: {__MODULE__.Record.t() | nil, t}
+  def shift(store)
+  def shift(%__MODULE__{heap: %Heap{data: nil}} = store), do: {nil, store}
 
-  @doc """
-  Retrieves next buffer.
-
-  If Store is empty or does not contain next buffer it will return error.
-  """
-  @spec get_next_buffer(t) :: {:ok, {__MODULE__.Record.t(), t}} | {:error, get_buffer_error()}
-  def get_next_buffer(store)
-  def get_next_buffer(%__MODULE__{heap: %Heap{data: nil}}), do: {:error, :not_present}
-
-  def get_next_buffer(%__MODULE__{prev_index: nil, heap: heap} = store) do
+  def shift(%__MODULE__{prev_index: nil, heap: heap} = store) do
     {record, updated_heap} = Heap.split(heap)
 
-    {:ok, {record, %__MODULE__{store | heap: updated_heap, prev_index: record.index}}}
+    {record, %__MODULE__{store | heap: updated_heap, prev_index: record.index}}
   end
 
-  def get_next_buffer(%__MODULE__{prev_index: prev_index, heap: heap} = store) do
-    %__MODULE__.Record{index: index} = Heap.root(heap)
+  def shift(%__MODULE__{prev_index: prev_index, heap: heap} = store) do
+    record = Heap.root(heap)
 
-    next_index = prev_index + 1
+    expected_next_index = prev_index + 1
 
-    if next_index == index do
-      {record, updated_heap} = Heap.split(heap)
+    {result, store} =
+      if record.index == expected_next_index do
+        updated_heap = Heap.pop(heap)
 
-      record = %{record | index: rem(record.index, @seq_number_limit)}
+        updated_store = %__MODULE__{store | heap: updated_heap}
 
-      updated_store =
-        %__MODULE__{store | heap: updated_heap}
-        |> bump_prev_index(next_index)
+        {record, updated_store}
+      else
+        {nil, store}
+      end
 
-      {:ok, {record, updated_store}}
-    else
-      {:error, :not_present}
-    end
+    {result, bump_prev_index(store)}
   end
 
   @doc """
-  Returns next buffer if the top element's timestamp is less than given min_time but doesn't
-  remove it from the heap.
+  Shifts the store to the buffer with the timestamps smaller than provided time
+
+  If this buffer is present, it will be returned.
+  Otherwise it will be treated as late and rejected on attempt to insert into the store.
   """
-  def peek_next_buffer(store, min_time) do
-    store.heap
+  @spec shift_older_than(t, Membrane.Time.t()) :: {[__MODULE__.Record.t() | nil], t}
+  def shift_older_than(store, time) do
+    {records, store} = do_shift_older_than(store, time, [])
+    {Enum.reverse(records), store}
+  end
+
+  defp do_shift_older_than(%__MODULE__{heap: heap} = store, boundary_time, acc) do
+    heap
     |> Heap.root()
     |> case do
-      %__MODULE__.Record{timestamp: time} = record when time <= min_time -> record
-      _ -> {:error, :not_present}
+      %__MODULE__.Record{timestamp: time} when time <= boundary_time ->
+        {record, store} = shift(store)
+        do_shift_older_than(store, boundary_time, [record | acc])
+
+      _ ->
+        {acc, store}
     end
   end
-
-  @doc """
-  Skips buffer.
-  """
-  @spec skip_buffer(t) :: {:ok, t} | {:error}
-  def skip_buffer(store)
-  def skip_buffer(%__MODULE__{prev_index: nil}), do: {:error, :store_not_initialized}
-
-  def skip_buffer(%__MODULE__{prev_index: last} = store),
-    do: {:ok, bump_prev_index(store, last + 1)}
 
   @doc """
   Returns all buffers that are stored in the `BufferStore`.
@@ -164,29 +152,31 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
          buffer,
          seq_num
        ) do
-    index = seq_num + roc * @seq_number_limit
+    index =
+      if has_rolled_over?(prev_index, seq_num) do
+        seq_num + (roc + 1) * @seq_number_limit
+      else
+        seq_num + roc * @seq_number_limit
+      end
 
-    cond do
-      is_fresh_packet?(prev_index, index) ->
-        record = __MODULE__.Record.new(buffer, index)
-        {:ok, add_to_heap(store, record)}
-
-      has_rolled_over?(roc, prev_index, index) ->
-        record = __MODULE__.Record.new(buffer, index + @seq_number_limit)
-        {:ok, add_to_heap(store, record)}
-
-      true ->
-        {:error, :late_packet}
+    if is_fresh_packet?(prev_index, index) do
+      record = __MODULE__.Record.new(buffer, index)
+      {:ok, add_to_heap(store, record)}
+    else
+      {:error, :late_packet}
     end
   end
 
   defp is_fresh_packet?(prev_index, index), do: index > prev_index
 
-  defp has_rolled_over?(roc, prev_index, index) do
-    next_rollover = (roc + 1) * @seq_number_limit
+  # Checks if the sequence number has rolled over
+  # Assumes an RTP packet can be at most late by @seq_num_rollover_delta
+  @spec has_rolled_over?(JitterBuffer.packet_index(), JitterBuffer.sequence_number()) :: boolean
+  defp has_rolled_over?(prev_index, seq_num) do
+    prev_seq_num = rem(prev_index, @seq_number_limit)
 
-    prev_index > next_rollover - @index_rollover_delta and
-      index + @seq_number_limit < next_rollover + @index_rollover_delta
+    prev_seq_num > @seq_number_limit - @seq_num_rollover_delta and
+      seq_num < @seq_num_rollover_delta
   end
 
   defp add_to_heap(%__MODULE__{heap: heap} = store, %__MODULE__.Record{} = record) do
@@ -198,12 +188,11 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
     end
   end
 
-  defp bump_prev_index(store, next_index)
+  defp bump_prev_index(%{prev_index: prev, rollover_count: roc} = store)
+       when rem(prev + 1, @seq_number_limit) == 0,
+       do: %__MODULE__{store | prev_index: prev + 1, rollover_count: roc + 1}
 
-  defp bump_prev_index(store, next_index) when rem(next_index, @seq_number_limit) == 0,
-    do: %__MODULE__{store | prev_index: next_index, rollover_count: store.rollover_count + 1}
-
-  defp bump_prev_index(store, next_index), do: %__MODULE__{store | prev_index: next_index}
+  defp bump_prev_index(store), do: %__MODULE__{store | prev_index: store.prev_index + 1}
 
   defp update_end_index(%__MODULE__{end_index: last} = store, added_index)
        when added_index > last or last == nil,

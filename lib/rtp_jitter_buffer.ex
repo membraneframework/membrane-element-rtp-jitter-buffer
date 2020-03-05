@@ -32,8 +32,8 @@ defmodule Membrane.Element.RTP.JitterBuffer do
                 spec: Membrane.Time.t() | nil,
                 default: nil,
                 description: """
-                Approximate of the highest acceptable delay for a packet. It serves as an
-                alternative to slot count when a transmitting live data. Please not that a small
+                Approximation of the highest acceptable delay for a packet. It serves as an
+                alternative to slot count when a transmitting live data. Please note that a small
                 enough max delay makes the slot count irrelevant. Expressed in nanoseconds since
                 insertion time.
                 """
@@ -60,11 +60,12 @@ defmodule Membrane.Element.RTP.JitterBuffer do
   @impl true
   def handle_demand(:output, size, :buffers, _ctx, %State{max_delay: max_delay} = state)
       when not is_nil(max_delay) do
-    {store, actions} = retrieve_stale_buffers(state.store, max_delay)
-    lb = length(actions)
+    {records, store} = BufferStore.shift_older_than(state.store, max_delay)
+    lb = length(records)
 
     demands = if lb < size, do: [demand: {:input, size - lb}], else: []
 
+    actions = records |> Enum.map(&record_to_action/1)
     {{:ok, actions ++ demands}, %{state | store: store}}
   end
 
@@ -87,16 +88,27 @@ defmodule Membrane.Element.RTP.JitterBuffer do
       {:ok, result} ->
         state = %State{state | store: result}
 
-        {actions, redemand, state} =
+        {buffers, store} =
           if buffer_full?(state) do
-            retrieve_buffer(state)
+            {buffer, store} = BufferStore.shift(store)
+
+            {[buffer], store}
           else
-            {[], [redemand: :output], state}
+            {[], store}
           end
 
-        {store, stale_actions} = retrieve_stale_buffers(state.store, state.max_delay)
+        {too_old_buffers, store} =
+          if state.max_delay != nil do
+            now = Membrane.Time.os_time()
+            oldest_acceptable_time = now - state.max_delay
+            BufferStore.shift_older_than(store, oldest_acceptable_time)
+          else
+            {[], store}
+          end
 
-        {{:ok, actions ++ stale_actions ++ redemand}, %{state | store: store}}
+        actions = (buffers ++ too_old_buffers) |> Enum.map(&record_to_action/1)
+
+        {{:ok, actions ++ [redemand: :output]}, %{state | store: store}}
 
       {:error, :late_packet} ->
         warn("Late packet has arrived")
@@ -104,71 +116,8 @@ defmodule Membrane.Element.RTP.JitterBuffer do
     end
   end
 
-  @spec retrieve_stale_buffers(BufferStore.t(), Membrane.Time.t() | nil) ::
-          {BufferStore.t(), list()}
-  defp retrieve_stale_buffers(store, nil), do: {store, []}
-
-  defp retrieve_stale_buffers(store, max_delay) do
-    current_time = Membrane.Time.os_time()
-    min_time = current_time - max_delay
-    {store, actions} = do_retrieve_stale_buffers(store, min_time, [])
-    {store, Enum.reverse(actions)}
-  end
-
-  @spec do_retrieve_stale_buffers(BufferStore.t(), Membrane.Time.t(), list()) ::
-          {BufferStore.t(), list()}
-  defp do_retrieve_stale_buffers(store, min_time, acc) do
-    store
-    |> BufferStore.get_next_buffer(min_time)
-    |> case do
-      {:ok, {%BufferStore.Record{buffer: buffer}, store}} ->
-        action = {:buffer, {:output, buffer}}
-
-        do_retrieve_stale_buffers(store, min_time, [action | acc])
-
-      {:error, :not_present} ->
-        store
-        |> skip_late_stale_buffers(min_time)
-        |> case do
-          {store, []} -> {store, acc}
-          {store, events} -> do_retrieve_stale_buffers(store, min_time, events ++ acc)
-        end
-    end
-  end
-
-  @spec skip_late_stale_buffers(BufferStore.t(), Membrane.Time.t()) :: {BufferStore.t(), list()}
-  defp skip_late_stale_buffers(store, min_time) do
-    store
-    |> BufferStore.peek_next_buffer(min_time)
-    |> case do
-      %BufferStore.Record{index: index} ->
-        (store.prev_index + 1)..(index - 1)
-        |> Enum.reduce({store, []}, fn _index, {store, acc} ->
-          {:ok, store} = BufferStore.skip_buffer(store)
-          {store, [{:event, {:output, %Membrane.Event.Discontinuity{}}} | acc]}
-        end)
-
-      _ ->
-        {store, []}
-    end
-  end
-
-  @spec retrieve_buffer(State.t()) :: {list(), list(), State.t()}
-  defp retrieve_buffer(%State{store: store} = state) do
-    case BufferStore.get_next_buffer(store) do
-      {:ok, {%BufferStore.Record{buffer: out_buffer}, store}} ->
-        actions = [buffer: {:output, out_buffer}]
-        {actions, [], %State{state | store: store}}
-
-      {:error, :not_present} ->
-        {:ok, updated_store} = BufferStore.skip_buffer(store)
-
-        {actions, redemand} =
-          {[event: {:output, %Membrane.Event.Discontinuity{}}], [redemand: :output]}
-
-        {actions, redemand, %State{state | store: updated_store}}
-    end
-  end
+  defp record_to_action(nil), do: {:event, {:output, %Membrane.Event.Discontinuity{}}}
+  defp record_to_action(%BufferStore.Record{buffer: buffer}), do: {:buffer, {:output, buffer}}
 
   defp buffer_full?(%State{store: store, slot_count: slot_count}),
     do: BufferStore.size(store) >= slot_count
