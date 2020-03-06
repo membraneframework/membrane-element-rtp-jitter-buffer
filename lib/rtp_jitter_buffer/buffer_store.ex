@@ -108,10 +108,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   end
 
   @doc """
-  Shifts the store to the buffer with the timestamps smaller than provided time
-
-  If this buffer is present, it will be returned.
-  Otherwise it will be treated as late and rejected on attempt to insert into the store.
+  Shifts the store as long as it contains the buffer with the timestamps smaller than provided time
   """
   @spec shift_older_than(t, Membrane.Time.t()) :: {[__MODULE__.Record.t() | nil], t}
   def shift_older_than(store, time) do
@@ -170,7 +167,10 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   defp is_fresh_packet?(prev_index, index), do: index > prev_index
 
   # Checks if the sequence number has rolled over
-  # Assumes an RTP packet can be at most late by @seq_num_rollover_delta
+  # Assumes the rollover happened if old sequence number was within @seq_num_rollover_delta from the limit
+  # and the new one is below @seq_num_rollover_delta.
+  # This means it can report a false positive but only if a packet is late by more than (limit - 2 * delta)
+  # which is highly unlikely.
   @spec has_rolled_over?(JitterBuffer.packet_index(), JitterBuffer.sequence_number()) :: boolean
   defp has_rolled_over?(prev_index, seq_num) do
     prev_seq_num = rem(prev_index, @seq_number_limit)
