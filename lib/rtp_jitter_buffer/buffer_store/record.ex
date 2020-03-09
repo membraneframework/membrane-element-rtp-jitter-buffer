@@ -16,7 +16,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore.Record do
   def new(buffer, index) do
     %__MODULE__{
       index: index,
-      timestamp: Membrane.Time.os_time(),
+      timestamp: Membrane.Time.monotonic_time(),
       buffer: buffer
     }
   end

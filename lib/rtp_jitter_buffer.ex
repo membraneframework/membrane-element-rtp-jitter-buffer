@@ -20,53 +20,43 @@ defmodule Membrane.Element.RTP.JitterBuffer do
     caps: Caps,
     demand_unit: :buffers
 
-  def_options slot_count: [
-                type: :number,
-                spec: pos_integer(),
+  def_options latency: [
+                type: :time,
+                default: 200 |> Membrane.Time.millisecond(),
                 description: """
-                Number of slots for buffers. Each time last slot is filled `JitterBuffer`
-                will send buffer through `:output` pad.
-                """
-              ],
-              max_delay: [
-                spec: Membrane.Time.t() | nil,
-                default: nil,
-                description: """
-                Approximation of the highest acceptable delay for a packet. It serves as an
-                alternative to slot count when a transmitting live data. Please note that a small
-                enough max delay makes the slot count irrelevant. Expressed in nanoseconds since
-                insertion time.
+                Delay introduced by JitterBuffer
                 """
               ]
 
   defmodule State do
     @moduledoc false
-    @enforce_keys [:slot_count]
+    @enforce_keys [:latency]
     defstruct store: %BufferStore{},
-              slot_count: 0,
-              max_delay: nil
+              latency: 0,
+              waiting?: true,
+              no_input_timeout: nil
 
     @type t :: %__MODULE__{
             store: BufferStore.t(),
-            slot_count: pos_integer(),
-            max_delay: Membrane.Time.t() | nil
+            latency: Membrane.Time.t(),
+            waiting?: boolean(),
+            no_input_timeout: reference
           }
   end
 
   @impl true
-  def handle_init(%__MODULE__{slot_count: slot_count, max_delay: max_delay}),
-    do: {:ok, %State{slot_count: slot_count, max_delay: max_delay}}
+  def handle_init(%__MODULE__{latency: latency}),
+    do: {:ok, %State{latency: latency}}
 
   @impl true
-  def handle_demand(:output, size, :buffers, _ctx, %State{max_delay: max_delay} = state)
-      when not is_nil(max_delay) do
-    {records, store} = BufferStore.shift_older_than(state.store, max_delay)
-    lb = length(records)
+  def handle_start_of_stream(:input, _context, state) do
+    Process.send_after(
+      self(),
+      :send_buffers,
+      state.latency |> Membrane.Time.to_milliseconds()
+    )
 
-    demands = if lb < size, do: [demand: {:input, size - lb}], else: []
-
-    actions = records |> Enum.map(&record_to_action/1)
-    {{:ok, actions ++ demands}, %{state | store: store}}
+    {:ok, %{state | waiting?: true}}
   end
 
   @impl true
@@ -77,38 +67,24 @@ defmodule Membrane.Element.RTP.JitterBuffer do
   def handle_end_of_stream(:input, _context, %State{store: store} = state) do
     store
     |> BufferStore.dump()
-    |> Enum.map(fn %BufferStore.Record{buffer: buffer} -> buffer end)
-    ~> {{:ok, [buffer: {:output, &1}, end_of_stream: :output]},
-     %State{state | store: %BufferStore{}}}
+    |> Enum.map(&record_to_action/1)
+    ~> {{:ok, &1 ++ [end_of_stream: :output]}, %State{state | store: %BufferStore{}}}
+  end
+
+  @impl true
+  def handle_process(:input, buffer, _context, %State{store: store, waiting?: true} = state) do
+    _ = BufferStore.insert_buffer(store, buffer)
+    {:ok, state}
   end
 
   @impl true
   def handle_process(:input, buffer, _context, %State{store: store} = state) do
+    state = reset_timer(state)
+
     case BufferStore.insert_buffer(store, buffer) do
       {:ok, result} ->
         state = %State{state | store: result}
-
-        {buffers, store} =
-          if buffer_full?(state) do
-            {buffer, store} = BufferStore.shift(store)
-
-            {[buffer], store}
-          else
-            {[], store}
-          end
-
-        {too_old_buffers, store} =
-          if state.max_delay != nil do
-            now = Membrane.Time.os_time()
-            oldest_acceptable_time = now - state.max_delay
-            BufferStore.shift_older_than(store, oldest_acceptable_time)
-          else
-            {[], store}
-          end
-
-        actions = (buffers ++ too_old_buffers) |> Enum.map(&record_to_action/1)
-
-        {{:ok, actions ++ [redemand: :output]}, %{state | store: store}}
+        send_buffers(state)
 
       {:error, :late_packet} ->
         warn("Late packet has arrived")
@@ -116,9 +92,34 @@ defmodule Membrane.Element.RTP.JitterBuffer do
     end
   end
 
+  @impl true
+  def handle_other(:send_buffers, _context, state) do
+    send_buffers(state)
+  end
+
+  defp send_buffers(%State{store: store} = state) do
+    # Shift buffers that stayed in queue longer than latency and any gaps before them
+    {too_old_records, store} = BufferStore.shift_older_than(store, state.latency)
+    # Additionally, shift buffers as long as there are no gaps
+    {buffers, store} = BufferStore.shift_ordered(store)
+
+    actions = (too_old_records ++ buffers) |> Enum.map(&record_to_action/1)
+
+    {{:ok, actions ++ [redemand: :output]}, %{state | store: store}}
+  end
+
+  @spec reset_timer(State.t()) :: State.t()
+  defp reset_timer(%State{no_input_timeout: timer, latency: latency} = state) do
+    if timer != nil do
+      Process.cancel_timer(timer)
+    end
+
+    new_timer =
+      Process.send_after(self(), :send_buffers, latency |> Membrane.Time.to_milliseconds())
+
+    %State{state | no_input_timeout: new_timer}
+  end
+
   defp record_to_action(nil), do: {:event, {:output, %Membrane.Event.Discontinuity{}}}
   defp record_to_action(%BufferStore.Record{buffer: buffer}), do: {:buffer, {:output, buffer}}
-
-  defp buffer_full?(%State{store: store, slot_count: slot_count}),
-    do: BufferStore.size(store) >= slot_count
 end

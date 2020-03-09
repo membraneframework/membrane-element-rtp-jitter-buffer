@@ -67,9 +67,8 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
     size
   end
 
-  def size(store) do
-    %__MODULE__{prev_index: prev_index, end_index: end_index} = store
-    heap_size(prev_index, end_index)
+  def size(%__MODULE__{prev_index: prev_index, end_index: end_index}) do
+    end_index - prev_index
   end
 
   @doc """
@@ -80,7 +79,6 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   """
   @spec shift(t) :: {__MODULE__.Record.t() | nil, t}
   def shift(store)
-  def shift(%__MODULE__{heap: %Heap{data: nil}} = store), do: {nil, store}
 
   def shift(%__MODULE__{prev_index: nil, heap: heap} = store) do
     {record, updated_heap} = Heap.split(heap)
@@ -94,7 +92,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
     expected_next_index = prev_index + 1
 
     {result, store} =
-      if record.index == expected_next_index do
+      if record != nil and record.index == expected_next_index do
         updated_heap = Heap.pop(heap)
 
         updated_store = %__MODULE__{store | heap: updated_heap}
@@ -108,11 +106,34 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   end
 
   @doc """
-  Shifts the store as long as it contains the buffer with the timestamps smaller than provided time
+  Shifts the store until the first gap in sequence numbers of records
+  """
+  @spec shift_ordered(t) :: {[__MODULE__.Record.t() | nil], t}
+  def shift_ordered(store) do
+    {records, store} = do_shift_ordered(store, [])
+    {Enum.reverse(records), store}
+  end
+
+  defp do_shift_ordered(%__MODULE__{heap: heap, prev_index: prev_index} = store, acc) do
+    heap
+    |> Heap.root()
+    |> case do
+      %__MODULE__.Record{index: index} when index == prev_index + 1 ->
+        {record, store} = shift(store)
+        do_shift_ordered(store, [record | acc])
+
+      _ ->
+        {acc, store}
+    end
+  end
+
+  @doc """
+  Shifts the store as long as it contains a buffer with the timestamp older than provided duration
   """
   @spec shift_older_than(t, Membrane.Time.t()) :: {[__MODULE__.Record.t() | nil], t}
-  def shift_older_than(store, time) do
-    {records, store} = do_shift_older_than(store, time, [])
+  def shift_older_than(store, max_age) do
+    max_age_timestamp = Membrane.Time.monotonic_time() - max_age
+    {records, store} = do_shift_older_than(store, max_age_timestamp, [])
     {Enum.reverse(records), store}
   end
 
@@ -208,8 +229,6 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
       _, _ -> {:cont, false}
     end)
   end
-
-  defp heap_size(last, ending), do: ending - last
 
   def to_list(nil), do: []
 
