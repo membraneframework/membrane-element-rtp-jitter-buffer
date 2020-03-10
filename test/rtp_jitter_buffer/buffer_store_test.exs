@@ -14,7 +14,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStoreTest do
   end
 
   describe "When adding buffer to the BufferStore it" do
-    test "accepts first buffer and does not initiate" do
+    test "accepts the first buffer" do
       buffer = BufferFactory.sample_buffer(@base_index)
 
       assert {:ok, updated_store} = BufferStore.insert_buffer(%BufferStore{}, buffer)
@@ -67,21 +67,23 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStoreTest do
     end
 
     test "returns the root buffer and initializes it", %{store: store, buffer: buffer} do
-      assert {:ok, {record, empty_store}} = BufferStore.get_next_buffer(store)
+      assert {%BufferStore.Record{} = record, empty_store} = BufferStore.shift(store)
       assert record.buffer == buffer
       assert empty_store.heap.size == 0
       assert empty_store.prev_index == record.index
     end
 
-    test "returns an error when heap is empty", %{base_store: store} do
-      assert {:error, :not_present} == BufferStore.get_next_buffer(store)
+    test "returns nil when store is empty and bumps prev_index", %{base_store: store} do
+      assert {nil, new_store} = BufferStore.shift(store)
+      assert new_store.prev_index == store.prev_index + 1
     end
 
-    test "returns an error when heap is not empty, but the next buffer is not present", %{
+    test "returns nil when heap is not empty, but the next buffer is not present", %{
       store: store
     } do
       broken_store = %BufferStore{store | prev_index: @base_index - 1}
-      assert {:error, :not_present} == BufferStore.get_next_buffer(broken_store)
+      assert {nil, new_store} = BufferStore.shift(broken_store)
+      assert new_store.prev_index == @base_index
     end
 
     test "sorts buffers by index number", %{base_store: store} do
@@ -101,16 +103,18 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStoreTest do
 
     test "handles rollover", %{base_store: base_store} do
       store = %BufferStore{base_store | prev_index: 65_533}
-      before_rollover_indexs = 65_534..65_535
-      after_rollover_indexs = 0..10
+      before_rollover_seq_nums = 65_534..65_535
+      after_rollover_seq_nums = 0..10
 
-      combined = Enum.into(before_rollover_indexs, []) ++ Enum.into(after_rollover_indexs, [])
+      combined = Enum.into(before_rollover_seq_nums, []) ++ Enum.into(after_rollover_seq_nums, [])
       combined_store = enum_into_store(combined, store)
 
       store =
         Enum.reduce(combined, combined_store, fn elem, store ->
-          {:ok, {record, store}} = BufferStore.get_next_buffer(store)
-          assert %BufferStore.Record{index: ^elem} = record
+          {record, store} = BufferStore.shift(store)
+          assert %BufferStore.Record{buffer: buffer} = record
+          assert %Membrane.Buffer{metadata: %{rtp: %{sequence_number: seq_number}}} = buffer
+          assert seq_number == elem
           store
         end)
 
@@ -123,7 +127,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStoreTest do
       store = enum_into_store(base_data, store)
 
       Enum.reduce(base_data, store, fn elem, store ->
-        {:ok, {record, store}} = BufferStore.get_next_buffer(store)
+        {record, store} = BufferStore.shift(store)
         assert %BufferStore.Record{index: ^elem} = record
         store
       end)
@@ -146,34 +150,8 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStoreTest do
       store = enum_into_store(indexes, %BufferStore{prev_index: 65_533})
 
       Enum.each(indexes, fn _index ->
-        assert {:ok, {_record, store}} = BufferStore.get_next_buffer(store)
+        assert {%BufferStore.Record{}, _store} = BufferStore.shift(store)
       end)
-    end
-
-    test "returns only stale buffers if min_time is given" do
-      store = enum_into_store([1, 2])
-      time = Membrane.Time.os_time()
-      store = enum_into_store([3], store)
-
-      assert {:ok, {%BufferStore.Record{index: 1}, store}} =
-               BufferStore.get_next_buffer(store, time)
-
-      assert {:ok, {%BufferStore.Record{index: 2}, store}} =
-               BufferStore.get_next_buffer(store, time)
-
-      assert {:error, _} = BufferStore.get_next_buffer(store, time)
-      assert {:ok, {%BufferStore.Record{index: 3}, _}} = BufferStore.get_next_buffer(store)
-    end
-  end
-
-  describe "When skipping buffer it" do
-    test "increments sequence number", %{base_store: %BufferStore{prev_index: last} = store} do
-      assert {:ok, %BufferStore{prev_index: next}} = BufferStore.skip_buffer(store)
-      assert next = last + 1
-    end
-
-    test "returns an error if the BufferStore is uninitialized" do
-      assert {:error, :store_not_initialized} == BufferStore.skip_buffer(%BufferStore{})
     end
   end
 

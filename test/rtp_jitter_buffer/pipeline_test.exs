@@ -7,23 +7,24 @@ defmodule Membrane.Element.RTP.JitterBuffer.PipelineTest do
   alias Membrane.Testing
   alias Membrane.Test.BufferFactory
 
-  @last_number 1000
+  @last_number 5000
   @buffer_size 100
 
   test "Jitter Buffer works in a Pipeline" do
-    test_pipeline(nil, false)
+    test_pipeline(0, shuffle?: false)
   end
 
+  @tag :focus
   test "Jitter Buffer outputs the entire store" do
-    test_pipeline(1, true)
+    test_pipeline(100 |> Membrane.Time.millisecond(), shuffle?: true)
   end
 
-  defp test_pipeline(delay, simple) do
+  defp test_pipeline(latency, shuffle?: shuffle?) do
     {:ok, pipeline} =
       Testing.Pipeline.start_link(%Testing.Pipeline.Options{
         elements: [
-          source: %Testing.Source{output: {1, generate_buffer(simple)}},
-          buffer: %RTPJitterBuffer{max_delay: delay, slot_count: @buffer_size},
+          source: %Testing.Source{output: {1, generate_buffer(shuffle?)}},
+          buffer: %RTPJitterBuffer{latency: latency},
           sink: %Testing.Sink{}
         ]
       })
@@ -44,7 +45,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.PipelineTest do
     end)
   end
 
-  defp generate_buffer(simple) do
+  defp generate_buffer(shuffle?) do
     fn
       cnt, _ when cnt > @last_number ->
         {[], cnt}
@@ -56,13 +57,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.PipelineTest do
         range = cnt..(cnt + size) |> trunc_range()
         _..last_element = range
 
-        if simple do
-          actions =
-            range
-            |> Enum.map(&action_from_number/1)
-
-          {actions, last_element + 1}
-        else
+        if shuffle? do
           actions =
             range
             # Introduces slight variation in buffer order
@@ -71,6 +66,12 @@ defmodule Membrane.Element.RTP.JitterBuffer.PipelineTest do
             |> Enum.map(&action_from_number/1)
 
           {actions, last_element}
+        else
+          actions =
+            range
+            |> Enum.map(&action_from_number/1)
+
+          {actions, last_element + 1}
         end
     end
   end

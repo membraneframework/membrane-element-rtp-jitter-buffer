@@ -50,6 +50,33 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   def insert_buffer(store, %Buffer{metadata: %{rtp: %{sequence_number: seq_num}}} = buffer),
     do: do_insert_buffer(store, buffer, seq_num)
 
+  @spec do_insert_buffer(t(), Buffer.t(), JitterBuffer.sequence_number()) ::
+          {:ok, t()} | {:error, insert_error()}
+  defp do_insert_buffer(%__MODULE__{prev_index: nil} = store, buffer, seq_num) do
+    store = add_to_heap(store, __MODULE__.Record.new(buffer, seq_num))
+    {:ok, store}
+  end
+
+  defp do_insert_buffer(
+         %__MODULE__{prev_index: prev_index, rollover_count: roc} = store,
+         buffer,
+         seq_num
+       ) do
+    index =
+      if has_rolled_over?(prev_index, seq_num) do
+        seq_num + (roc + 1) * @seq_number_limit
+      else
+        seq_num + roc * @seq_number_limit
+      end
+
+    if is_fresh_packet?(prev_index, index) do
+      record = __MODULE__.Record.new(buffer, index)
+      {:ok, add_to_heap(store, record)}
+    else
+      {:error, :late_packet}
+    end
+  end
+
   @doc """
   Calculates size of the Store.
 
@@ -153,36 +180,17 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   @doc """
   Returns all buffers that are stored in the `BufferStore`.
   """
-  @spec dump(nil | t()) :: [__MODULE__.Record.t()]
-  def dump(%__MODULE__{} = store), do: to_list(store)
-
-  # Private API
-
-  @spec do_insert_buffer(t(), Buffer.t(), JitterBuffer.sequence_number()) ::
-          {:ok, t()} | {:error, insert_error()}
-  defp do_insert_buffer(%__MODULE__{prev_index: nil} = store, buffer, seq_num) do
-    updated_store = add_to_heap(store, __MODULE__.Record.new(buffer, seq_num))
-    {:ok, updated_store}
+  @spec dump(t()) :: [__MODULE__.Record.t()]
+  def dump(%__MODULE__{} = store) do
+    records = do_dump(store, size(store), [])
+    Enum.reverse(records)
   end
 
-  defp do_insert_buffer(
-         %__MODULE__{prev_index: prev_index, rollover_count: roc} = store,
-         buffer,
-         seq_num
-       ) do
-    index =
-      if has_rolled_over?(prev_index, seq_num) do
-        seq_num + (roc + 1) * @seq_number_limit
-      else
-        seq_num + roc * @seq_number_limit
-      end
+  defp do_dump(%__MODULE__{}, 0, acc), do: acc
 
-    if is_fresh_packet?(prev_index, index) do
-      record = __MODULE__.Record.new(buffer, index)
-      {:ok, add_to_heap(store, record)}
-    else
-      {:error, :late_packet}
-    end
+  defp do_dump(%__MODULE__{} = store, to_shift, acc) do
+    {record, store} = shift(store)
+    do_dump(store, to_shift - 1, [record | acc])
   end
 
   defp is_fresh_packet?(prev_index, index), do: index > prev_index
@@ -229,9 +237,4 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
       _, _ -> {:cont, false}
     end)
   end
-
-  def to_list(nil), do: []
-
-  def to_list(%__MODULE__{heap: heap}),
-    do: Enum.into(heap, [])
 end
