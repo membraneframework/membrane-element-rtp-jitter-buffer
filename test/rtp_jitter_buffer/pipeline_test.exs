@@ -7,78 +7,107 @@ defmodule Membrane.Element.RTP.JitterBuffer.PipelineTest do
   alias Membrane.Testing
   alias Membrane.Test.BufferFactory
 
-  @last_number 5000
-  @buffer_size 100
+  defmodule PushTestingSrc do
+    use Membrane.Source
+    alias Membrane.Test.BufferFactory
 
-  test "Jitter Buffer works in a Pipeline" do
-    test_pipeline(0, shuffle?: false)
+    def_output_pad :output, caps: :any, mode: :push
+
+    def_options buffer_num: [type: :number],
+                buffer_delay_ms: [type: :number],
+                max_latency: [type: :number]
+
+    @impl true
+    def handle_prepared_to_playing(
+          _ctx,
+          %{
+            buffer_delay_ms: delay_ms,
+            buffer_num: buffer_num,
+            max_latency: max_latency
+          } = state
+        ) do
+      now = System.monotonic_time(:millisecond)
+
+      1..buffer_num
+      |> Enum.each(fn n ->
+        time =
+          cond do
+            # Delay less than max latency
+            rem(n, 15) == 0 -> n * delay_ms + div(max_latency, 2)
+            # Delay more than max latency
+            rem(n, 19) == 0 -> n * delay_ms + max_latency * 2
+            true -> n * delay_ms
+          end
+
+        if rem(n, 50) < 30 or rem(n, 50) > 32 do
+          Process.send_after(self(), {:push_buffer, n}, now + time, abs: true)
+        end
+      end)
+
+      {:ok, state}
+    end
+
+    @impl true
+    def handle_other({:push_buffer, n}, _ctx, state) do
+      actions = [action_from_number(n)]
+
+      {{:ok, actions}, state}
+    end
+
+    defp action_from_number(element),
+      do: {:buffer, {:output, BufferFactory.sample_buffer(element)}}
   end
 
-  @tag :focus
-  test "Jitter Buffer outputs the entire store" do
-    test_pipeline(100 |> Membrane.Time.millisecond(), shuffle?: true)
+  test "Jitter Buffer works in a Pipeline with large latency" do
+    test_pipeline(200, 20 |> Membrane.Time.millisecond())
   end
 
-  defp test_pipeline(latency, shuffle?: shuffle?) do
+  test "Jitter Buffer works in a Pipeline with small latency" do
+    test_pipeline(500, 200 |> Membrane.Time.millisecond())
+  end
+
+  defp test_pipeline(buffers, latency) do
+    latency_ms = latency |> Membrane.Time.to_milliseconds()
+
     {:ok, pipeline} =
       Testing.Pipeline.start_link(%Testing.Pipeline.Options{
         elements: [
-          source: %Testing.Source{output: {1, generate_buffer(shuffle?)}},
+          source: %PushTestingSrc{
+            buffer_num: buffers,
+            buffer_delay_ms: 10,
+            max_latency: latency_ms
+          },
           buffer: %RTPJitterBuffer{latency: latency},
           sink: %Testing.Sink{}
         ]
       })
 
     Membrane.Pipeline.play(pipeline)
+    assert_pipeline_playback_changed(pipeline, _, :prepared)
     assert_pipeline_playback_changed(pipeline, _, :playing)
 
-    Enum.each(1..(@last_number - 1), fn elem ->
-      assert_sink_buffer(
-        pipeline,
-        :sink,
-        %Membrane.Buffer{
-          metadata: %{rtp: %{sequence_number: ^elem, timestamp: _}},
-          payload: _
-        },
-        5000
-      )
+    assert_start_of_stream(pipeline, :buffer, :input, 5000)
+    assert_start_of_stream(pipeline, :sink, :input, latency_ms + 50)
+
+    Enum.each(1..buffers, fn n ->
+      cond do
+        rem(n, 50) >= 30 and rem(n, 50) <= 32 ->
+          assert_sink_event(pipeline, :sink, %Membrane.Event.Discontinuity{}, 5000)
+
+        rem(n, 19) == 0 and rem(n, 15) != 0 ->
+          assert_sink_event(pipeline, :sink, %Membrane.Event.Discontinuity{})
+
+        true ->
+          assert_sink_buffer(
+            pipeline,
+            :sink,
+            %Membrane.Buffer{
+              metadata: %{rtp: %{sequence_number: ^n, timestamp: _}},
+              payload: _
+            },
+            5000
+          )
+      end
     end)
   end
-
-  defp generate_buffer(shuffle?) do
-    fn
-      cnt, _ when cnt > @last_number ->
-        {[], cnt}
-
-      @last_number, _ ->
-        {[event: {:output, %Membrane.Event.EndOfStream{}}], @last_number + 1}
-
-      cnt, size ->
-        range = cnt..(cnt + size) |> trunc_range()
-        _..last_element = range
-
-        if shuffle? do
-          actions =
-            range
-            # Introduces slight variation in buffer order
-            |> Enum.chunk_every(round(@buffer_size / 2))
-            |> Enum.flat_map(&Enum.shuffle/1)
-            |> Enum.map(&action_from_number/1)
-
-          {actions, last_element}
-        else
-          actions =
-            range
-            |> Enum.map(&action_from_number/1)
-
-          {actions, last_element + 1}
-        end
-    end
-  end
-
-  defp action_from_number(element), do: {:buffer, {:output, BufferFactory.sample_buffer(element)}}
-
-  defp trunc_range(start.._) when start >= @last_number, do: []
-  defp trunc_range(start..range_end) when range_end >= @last_number, do: start..@last_number
-  defp trunc_range(range), do: range
 end

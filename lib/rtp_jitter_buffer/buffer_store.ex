@@ -126,6 +126,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
 
         {record, updated_store}
       else
+        # TODO: instead of nil use expected_next_index to put in Discontinuity metadata
         {nil, store}
       end
 
@@ -191,6 +192,34 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   defp do_dump(%__MODULE__{} = store, to_shift, acc) do
     {record, store} = shift(store)
     do_dump(store, to_shift - 1, [record | acc])
+  end
+
+  @doc """
+  Returns timestamp (time of insertion) of a buffer with lowest index
+  """
+  @spec first_record_timestamp(t()) :: Membrane.Time.t() | nil
+  def first_record_timestamp(%__MODULE__{heap: heap}) do
+    case Heap.root(heap) do
+      %__MODULE__.Record{timestamp: time} -> time
+      _ -> nil
+    end
+  end
+
+  @doc """
+  Marks the start of the stream. After using this function any buffer older than
+  the first in queue it will be considered late
+  """
+  @spec mark_start(t()) :: t()
+  def mark_start(%__MODULE__{heap: heap} = store) do
+    heap
+    |> Heap.root()
+    |> case do
+      %__MODULE__.Record{index: index} ->
+        %__MODULE__{store | prev_index: index - 1}
+
+      _ ->
+        store
+    end
   end
 
   defp is_fresh_packet?(prev_index, index), do: index > prev_index

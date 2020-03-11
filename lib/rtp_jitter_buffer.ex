@@ -85,7 +85,7 @@ defmodule Membrane.Element.RTP.JitterBuffer do
     state =
       case BufferStore.insert_buffer(store, buffer) do
         {:ok, result} ->
-          %State{state | store: result} |> reset_timer()
+          %State{state | store: result}
 
         {:error, :late_packet} ->
           warn("Late packet has arrived")
@@ -99,7 +99,7 @@ defmodule Membrane.Element.RTP.JitterBuffer do
   def handle_process(:input, buffer, _context, %State{store: store} = state) do
     case BufferStore.insert_buffer(store, buffer) do
       {:ok, result} ->
-        state = %State{state | store: result} |> reset_timer()
+        state = %State{state | store: result}
         send_buffers(state)
 
       {:error, :late_packet} ->
@@ -110,7 +110,7 @@ defmodule Membrane.Element.RTP.JitterBuffer do
 
   @impl true
   def handle_other(:initial_latency_passed, _context, state) do
-    state = %State{state | waiting?: false}
+    state = %State{state | waiting?: false, store: BufferStore.mark_start(state.store)}
     send_buffers(state)
   end
 
@@ -139,7 +139,15 @@ defmodule Membrane.Element.RTP.JitterBuffer do
     end
 
     new_timer =
-      Process.send_after(self(), :send_buffers, latency |> Membrane.Time.to_milliseconds())
+      case BufferStore.first_record_timestamp(state.store) do
+        nil ->
+          nil
+
+        buffer_ts ->
+          since_insertion = Membrane.Time.monotonic_time() - buffer_ts
+          send_after_time = max(0, latency - since_insertion) |> Membrane.Time.to_milliseconds()
+          Process.send_after(self(), :send_buffers, send_after_time)
+      end
 
     %State{state | max_latency_timer: new_timer}
   end
