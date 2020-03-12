@@ -110,7 +110,7 @@ defmodule Membrane.Element.RTP.JitterBuffer do
 
   @impl true
   def handle_other(:initial_latency_passed, _context, state) do
-    state = %State{state | waiting?: false, store: BufferStore.mark_start(state.store)}
+    state = %State{state | waiting?: false}
     send_buffers(state)
   end
 

@@ -84,21 +84,6 @@ defmodule Membrane.Element.RTP.JitterBufferTest do
       assert [^first_buffer, ^second_buffer, ^third_buffer] = buffers
       assert BufferStore.size(result_store) == 0
     end
-
-    # test "when buffer is missing returns an event discontinuity" do
-    #  state = %State{slot_count: @max_buffer_size}
-    #  first_buffer = BufferFactory.sample_buffer(@base_seq_number + div(@max_buffer_size, 2))
-    #  last_buffer = BufferFactory.sample_buffer(@base_seq_number + @max_buffer_size)
-    #  {:ok, store} = BufferStore.insert_buffer(%BufferStore{}, first_buffer)
-    #  store = %BufferStore{store | prev_index: @base_seq_number - 1}
-    #  filled_state = %State{state | store: store}
-
-    #  assert {{:ok, commands}, %State{store: result_store}} =
-    #           RTPJitterBuffer.handle_process(:input, last_buffer, nil, filled_state)
-
-    #  assert Keyword.fetch!(commands, :event) == {:output, %Membrane.Event.Discontinuity{}}
-    #  assert result_store.prev_index == filled_state.store.prev_index + 1
-    # end
   end
 
   describe "When latency pasess without filling the gap, JitterBuffer" do

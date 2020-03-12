@@ -7,6 +7,8 @@ defmodule Membrane.Element.RTP.JitterBuffer.PipelineTest do
   alias Membrane.Testing
   alias Membrane.Test.BufferFactory
 
+  @seq_number_limit 65_536
+
   defmodule PushTestingSrc do
     use Membrane.Source
     alias Membrane.Test.BufferFactory
@@ -58,15 +60,21 @@ defmodule Membrane.Element.RTP.JitterBuffer.PipelineTest do
       do: {:buffer, {:output, BufferFactory.sample_buffer(element)}}
   end
 
-  test "Jitter Buffer works in a Pipeline with large latency" do
-    test_pipeline(200, 20 |> Membrane.Time.millisecond())
-  end
-
   test "Jitter Buffer works in a Pipeline with small latency" do
-    test_pipeline(500, 200 |> Membrane.Time.millisecond())
+    test_pipeline(300, 10, 200 |> Membrane.Time.millisecond())
   end
 
-  defp test_pipeline(buffers, latency) do
+  test "Jitter Buffer works in a Pipeline with large latency" do
+    test_pipeline(100, 30, 1000 |> Membrane.Time.millisecond())
+  end
+
+  @tag :long_running
+  @tag timeout: 70_000 * 20 + 10000
+  test "Jitter Buffer works in a long-running Pipeline with small latency" do
+    test_pipeline(70_000, 20, 100 |> Membrane.Time.millisecond())
+  end
+
+  defp test_pipeline(buffers, buffer_delay_ms, latency) do
     latency_ms = latency |> Membrane.Time.to_milliseconds()
 
     {:ok, pipeline} =
@@ -74,7 +82,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.PipelineTest do
         elements: [
           source: %PushTestingSrc{
             buffer_num: buffers,
-            buffer_delay_ms: 10,
+            buffer_delay_ms: buffer_delay_ms,
             max_latency: latency_ms
           },
           buffer: %RTPJitterBuffer{latency: latency},
@@ -86,16 +94,19 @@ defmodule Membrane.Element.RTP.JitterBuffer.PipelineTest do
     assert_pipeline_playback_changed(pipeline, _, :prepared)
     assert_pipeline_playback_changed(pipeline, _, :playing)
 
+    timeout = latency_ms + 500
     assert_start_of_stream(pipeline, :buffer, :input, 5000)
-    assert_start_of_stream(pipeline, :sink, :input, latency_ms + 50)
+    assert_start_of_stream(pipeline, :sink, :input, timeout)
 
-    Enum.each(1..buffers, fn n ->
+    Enum.each(1..buffers, fn index ->
+      n = rem(index, @seq_number_limit)
+
       cond do
         rem(n, 50) >= 30 and rem(n, 50) <= 32 ->
-          assert_sink_event(pipeline, :sink, %Membrane.Event.Discontinuity{}, 5000)
+          assert_sink_event(pipeline, :sink, %Membrane.Event.Discontinuity{}, timeout)
 
         rem(n, 19) == 0 and rem(n, 15) != 0 ->
-          assert_sink_event(pipeline, :sink, %Membrane.Event.Discontinuity{})
+          assert_sink_event(pipeline, :sink, %Membrane.Event.Discontinuity{}, timeout)
 
         true ->
           assert_sink_buffer(
@@ -105,7 +116,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.PipelineTest do
               metadata: %{rtp: %{sequence_number: ^n, timestamp: _}},
               payload: _
             },
-            5000
+            timeout
           )
       end
     end)

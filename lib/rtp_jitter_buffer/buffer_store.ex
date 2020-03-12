@@ -52,9 +52,14 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
 
   @spec do_insert_buffer(t(), Buffer.t(), JitterBuffer.sequence_number()) ::
           {:ok, t()} | {:error, insert_error()}
+  defp do_insert_buffer(%__MODULE__{prev_index: nil} = store, buffer, 0) do
+    store = add_to_heap(store, __MODULE__.Record.new(buffer, @seq_number_limit))
+    {:ok, %__MODULE__{store | prev_index: @seq_number_limit - 1}}
+  end
+
   defp do_insert_buffer(%__MODULE__{prev_index: nil} = store, buffer, seq_num) do
     store = add_to_heap(store, __MODULE__.Record.new(buffer, seq_num))
-    {:ok, store}
+    {:ok, %__MODULE__{store | prev_index: seq_num - 1}}
   end
 
   defp do_insert_buffer(
@@ -108,9 +113,15 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   def shift(store)
 
   def shift(%__MODULE__{prev_index: nil, heap: heap} = store) do
-    {record, updated_heap} = Heap.split(heap)
+    record = Heap.root(heap)
 
-    {record, %__MODULE__{store | heap: updated_heap, prev_index: record.index}}
+    {prev_index, heap} =
+      case record do
+        nil -> {nil, heap}
+        _ -> {record.index, Heap.pop(heap)}
+      end
+
+    {record, %__MODULE__{store | heap: heap, prev_index: prev_index}}
   end
 
   def shift(%__MODULE__{prev_index: prev_index, heap: heap} = store) do
@@ -205,23 +216,6 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
     end
   end
 
-  @doc """
-  Marks the start of the stream. After using this function any buffer older than
-  the first in queue it will be considered late
-  """
-  @spec mark_start(t()) :: t()
-  def mark_start(%__MODULE__{heap: heap} = store) do
-    heap
-    |> Heap.root()
-    |> case do
-      %__MODULE__.Record{index: index} ->
-        %__MODULE__{store | prev_index: index - 1}
-
-      _ ->
-        store
-    end
-  end
-
   defp is_fresh_packet?(prev_index, index), do: index > prev_index
 
   # Checks if the sequence number has rolled over
@@ -230,7 +224,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   # This means it can report a false positive but only if a packet is late by more than (limit - 2 * delta)
   # which is highly unlikely.
   @spec has_rolled_over?(JitterBuffer.packet_index(), JitterBuffer.sequence_number()) :: boolean
-  defp has_rolled_over?(prev_index, seq_num) do
+  def has_rolled_over?(prev_index, seq_num) do
     prev_seq_num = rem(prev_index, @seq_number_limit)
 
     prev_seq_num > @seq_number_limit - @seq_num_rollover_delta and

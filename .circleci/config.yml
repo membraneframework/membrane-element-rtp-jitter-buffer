@@ -12,4 +12,5 @@ jobs:
       - checkout
       - run: mix deps.get
       - run: mix format --check-formatted
-      - run: mix test
+      - run: mix compile --warnings-as-errors
+      - run: mix test --include long_running

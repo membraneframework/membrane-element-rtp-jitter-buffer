@@ -53,6 +53,62 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStoreTest do
       {:ok, store} = BufferStore.insert_buffer(base_store, buffer)
       assert {:ok, ^store} = BufferStore.insert_buffer(store, buffer)
     end
+
+    test "handles first buffers starting with sequence_number 0" do
+      store = %BufferStore{}
+      buffer_a = BufferFactory.sample_buffer(0)
+      assert {:ok, store} = BufferStore.insert_buffer(store, buffer_a)
+
+      {record_a, store} = BufferStore.shift(store)
+
+      assert record_a.index == @seq_number_limit
+      assert record_a.buffer.metadata.rtp.sequence_number == 0
+
+      buffer_b = BufferFactory.sample_buffer(1)
+      assert {:ok, store} = BufferStore.insert_buffer(store, buffer_b)
+
+      {record_b, _store} = BufferStore.shift(store)
+      assert record_b.index == @seq_number_limit + 1
+      assert record_b.buffer.metadata.rtp.sequence_number == 1
+    end
+
+    test "handles late buffers when starting with sequence_number 0" do
+      store = %BufferStore{}
+      buffer = BufferFactory.sample_buffer(0)
+      assert {:ok, store} = BufferStore.insert_buffer(store, buffer)
+
+      buffer = BufferFactory.sample_buffer(1)
+      assert {:ok, store} = BufferStore.insert_buffer(store, buffer)
+
+      buffer = BufferFactory.sample_buffer(@seq_number_limit - 1)
+      assert {:error, :late_packet} = BufferStore.insert_buffer(store, buffer)
+    end
+
+    test "handles rollover before any buffer was sent" do
+      store = %BufferStore{}
+      buffer = BufferFactory.sample_buffer(@seq_number_limit - 1)
+      assert {:ok, store} = BufferStore.insert_buffer(store, buffer)
+
+      buffer = BufferFactory.sample_buffer(0)
+      assert {:ok, store} = BufferStore.insert_buffer(store, buffer)
+
+      buffer = BufferFactory.sample_buffer(1)
+      assert {:ok, store} = BufferStore.insert_buffer(store, buffer)
+
+      seq_numbers =
+        store
+        |> BufferStore.dump()
+        |> Enum.map(& &1.buffer.metadata.rtp.sequence_number)
+
+      assert seq_numbers == [65_535, 0, 1]
+
+      indexes =
+        store
+        |> BufferStore.dump()
+        |> Enum.map(& &1.index)
+
+      assert indexes == [@seq_number_limit - 1, @seq_number_limit, @seq_number_limit + 1]
+    end
   end
 
   describe "When getting a buffer from BufferStore it" do
