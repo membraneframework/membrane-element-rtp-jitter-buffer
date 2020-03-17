@@ -109,6 +109,31 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStoreTest do
 
       assert indexes == [@seq_number_limit - 1, @seq_number_limit, @seq_number_limit + 1]
     end
+
+    test "handles late buffer after rollover" do
+      store = %BufferStore{}
+      first_buffer = BufferFactory.sample_buffer(@seq_number_limit - 1)
+      assert {:ok, store} = BufferStore.insert_buffer(store, first_buffer)
+
+      second_buffer = BufferFactory.sample_buffer(0)
+      assert {:ok, store} = BufferStore.insert_buffer(store, second_buffer)
+
+      buffer = BufferFactory.sample_buffer(1)
+      assert {:ok, store} = BufferStore.insert_buffer(store, buffer)
+
+      assert {%BufferStore.Record{buffer: ^first_buffer}, store} = BufferStore.shift(store)
+      assert {%BufferStore.Record{buffer: ^second_buffer}, store} = BufferStore.shift(store)
+
+      buffer = BufferFactory.sample_buffer(@seq_number_limit - 2)
+      assert {:error, :late_packet} = BufferStore.insert_buffer(store, buffer)
+
+      seq_numbers =
+        store
+        |> BufferStore.dump()
+        |> Enum.map(& &1.buffer.metadata.rtp.sequence_number)
+
+      assert seq_numbers == [1]
+    end
   end
 
   describe "When getting a buffer from BufferStore it" do

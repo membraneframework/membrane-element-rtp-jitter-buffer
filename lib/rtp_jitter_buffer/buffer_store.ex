@@ -68,10 +68,15 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
          seq_num
        ) do
     index =
-      if has_rolled_over?(prev_index, seq_num) do
-        seq_num + (roc + 1) * @seq_number_limit
-      else
-        seq_num + roc * @seq_number_limit
+      cond do
+        has_rolled_over?(prev_index, seq_num) ->
+          seq_num + (roc + 1) * @seq_number_limit
+
+        from_before_rollover?(prev_index, seq_num) ->
+          seq_num + (roc - 1) * @seq_number_limit
+
+        true ->
+          seq_num + roc * @seq_number_limit
       end
 
     if is_fresh_packet?(prev_index, index) do
@@ -229,6 +234,15 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
 
     prev_seq_num > @seq_number_limit - @seq_num_rollover_delta and
       seq_num < @seq_num_rollover_delta
+  end
+
+  @spec from_before_rollover?(JitterBuffer.packet_index(), JitterBuffer.sequence_number()) ::
+          boolean
+  def from_before_rollover?(prev_index, seq_num) do
+    prev_seq_num = rem(prev_index, @seq_number_limit)
+
+    prev_seq_num < @seq_num_rollover_delta and
+      seq_num > @seq_number_limit - @seq_num_rollover_delta
   end
 
   defp add_to_heap(%__MODULE__{heap: heap} = store, %__MODULE__.Record{} = record) do
