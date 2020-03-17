@@ -146,21 +146,9 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   """
   @spec shift_ordered(t) :: {[__MODULE__.Record.t() | nil], t}
   def shift_ordered(store) do
-    {records, store} = do_shift_ordered(store, [])
-    {Enum.reverse(records), store}
-  end
-
-  defp do_shift_ordered(%__MODULE__{heap: heap, prev_index: prev_index} = store, acc) do
-    heap
-    |> Heap.root()
-    |> case do
-      %__MODULE__.Record{index: index} when index == prev_index + 1 ->
-        {record, store} = shift(store)
-        do_shift_ordered(store, [record | acc])
-
-      _ ->
-        {acc, store}
-    end
+    shift_while(store, fn %__MODULE__{prev_index: prev_index}, %__MODULE__.Record{index: index} ->
+      index == prev_index + 1
+    end)
   end
 
   @doc """
@@ -169,21 +157,10 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   @spec shift_older_than(t, Membrane.Time.t()) :: {[__MODULE__.Record.t() | nil], t}
   def shift_older_than(store, max_age) do
     max_age_timestamp = Membrane.Time.monotonic_time() - max_age
-    {records, store} = do_shift_older_than(store, max_age_timestamp, [])
-    {Enum.reverse(records), store}
-  end
 
-  defp do_shift_older_than(%__MODULE__{heap: heap} = store, boundary_time, acc) do
-    heap
-    |> Heap.root()
-    |> case do
-      %__MODULE__.Record{timestamp: time} when time <= boundary_time ->
-        {record, store} = shift(store)
-        do_shift_older_than(store, boundary_time, [record | acc])
-
-      _ ->
-        {acc, store}
-    end
+    shift_while(store, fn _store, %__MODULE__.Record{timestamp: timestamp} ->
+      timestamp <= max_age_timestamp
+    end)
   end
 
   @doc """
@@ -191,15 +168,8 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   """
   @spec dump(t()) :: [__MODULE__.Record.t()]
   def dump(%__MODULE__{} = store) do
-    records = do_dump(store, size(store), [])
-    Enum.reverse(records)
-  end
-
-  defp do_dump(%__MODULE__{}, 0, acc), do: acc
-
-  defp do_dump(%__MODULE__{} = store, to_shift, acc) do
-    {record, store} = shift(store)
-    do_dump(store, to_shift - 1, [record | acc])
+    {records, _store} = shift_while(store, fn _, _ -> true end)
+    records
   end
 
   @doc """
@@ -237,6 +207,25 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
       seq_num > @seq_number_limit - @seq_num_rollover_delta
   end
 
+  @spec shift_while(t, (t, __MODULE__.Record.t() -> boolean), [__MODULE__.Record.t() | nil]) ::
+          {[__MODULE__.Record.t() | nil], t}
+  defp shift_while(%__MODULE__{heap: heap} = store, fun, acc \\ []) do
+    heap
+    |> Heap.root()
+    |> case do
+      nil ->
+        {Enum.reverse(acc), store}
+
+      record ->
+        if fun.(store, record) do
+          {record, store} = shift(store)
+          shift_while(store, fun, [record | acc])
+        else
+          {Enum.reverse(acc), store}
+        end
+    end
+  end
+
   defp add_to_heap(%__MODULE__{heap: heap} = store, %__MODULE__.Record{} = record) do
     if contains_index(heap, record.index) do
       store
@@ -263,6 +252,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   defp contains_index(heap, index) do
     Enum.reduce_while(heap, false, fn
       %__MODULE__.Record{index: ^index}, _acc -> {:halt, true}
+      %__MODULE__.Record{index: current_i}, _acc when current_i > index -> {:halt, false}
       _, _ -> {:cont, false}
     end)
   end
