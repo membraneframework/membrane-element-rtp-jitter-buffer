@@ -109,6 +109,7 @@ defmodule Membrane.Element.RTP.JitterBuffer do
 
   @impl true
   def handle_other(:send_buffers, _context, state) do
+    state = %State{state | max_latency_timer: nil}
     send_buffers(state)
   end
 
@@ -120,17 +121,13 @@ defmodule Membrane.Element.RTP.JitterBuffer do
 
     actions = (too_old_records ++ buffers) |> Enum.map(&record_to_action/1)
 
-    state = %{state | store: store} |> reset_timer()
+    state = %{state | store: store} |> set_timer()
 
     {{:ok, actions ++ [redemand: :output]}, state}
   end
 
-  @spec reset_timer(State.t()) :: State.t()
-  defp reset_timer(%State{max_latency_timer: timer, latency: latency} = state) do
-    if timer != nil do
-      Process.cancel_timer(timer)
-    end
-
+  @spec set_timer(State.t()) :: State.t()
+  defp set_timer(%State{max_latency_timer: nil, latency: latency} = state) do
     new_timer =
       case BufferStore.first_record_timestamp(state.store) do
         nil ->
@@ -144,6 +141,8 @@ defmodule Membrane.Element.RTP.JitterBuffer do
 
     %State{state | max_latency_timer: new_timer}
   end
+
+  defp set_timer(%State{max_latency_timer: timer} = state) when timer != nil, do: state
 
   defp record_to_action(nil), do: {:event, {:output, %Membrane.Event.Discontinuity{}}}
   defp record_to_action(%BufferStore.Record{buffer: buffer}), do: {:buffer, {:output, buffer}}
