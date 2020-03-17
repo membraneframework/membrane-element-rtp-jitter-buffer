@@ -47,13 +47,6 @@ defmodule Membrane.Element.RTP.JitterBuffer do
 
   @impl true
   def handle_init(%__MODULE__{latency: latency}) do
-    latency =
-      if latency == nil do
-        @default_latency
-      else
-        latency
-      end
-
     {:ok, %State{latency: latency}}
   end
 
