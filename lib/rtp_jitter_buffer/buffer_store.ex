@@ -135,6 +135,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
         {record, updated_store}
       else
         # TODO: instead of nil use expected_next_index to put in Discontinuity metadata
+        #       after https://github.com/membraneframework/membrane-core/issues/238 is done.
         {nil, store}
       end
 
