@@ -1,21 +1,21 @@
 defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
-  @moduledoc """
-  Store for RTP packets. Packets are stored in `Heap` ordered by packet index. Packet index is
-  defined in RFC 3711 (SRTP) as: 2^16 * rollover count + sequence number.
+  @moduledoc false
 
-  ## Fields
-    - `rollover_count` - count of all performed rollovers
-    - `heap` - contains records containing buffers
-    - `prev_index` - index of the last packet that has been served
-    - `end_index` - index of the oldest packet inserted into the store
+  # Store for RTP packets. Packets are stored in `Heap` ordered by packet index. Packet index is
+  # defined in RFC 3711 (SRTP) as: 2^16 * rollover count + sequence number.
 
-  """
+  # ## Fields
+  #   - `rollover_count` - count of all performed rollovers
+  #   - `heap` - contains records containing buffers
+  #   - `prev_index` - index of the last packet that has been served
+  #   - `end_index` - index of the oldest packet inserted into the store
+
   use Bunch
   alias Membrane.Element.RTP.JitterBuffer
   alias Membrane.Buffer
 
   @seq_number_limit 65_536
-  @seq_num_rollover_delta 1_500
+  @seq_num_rollover_delta @seq_number_limit / 4
 
   defstruct prev_index: nil,
             end_index: nil,
@@ -117,16 +117,8 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   @spec shift(t) :: {__MODULE__.Record.t() | nil, t}
   def shift(store)
 
-  def shift(%__MODULE__{prev_index: nil, heap: heap} = store) do
-    record = Heap.root(heap)
-
-    {prev_index, heap} =
-      case record do
-        nil -> {nil, heap}
-        _ -> {record.index, Heap.pop(heap)}
-      end
-
-    {record, %__MODULE__{store | heap: heap, prev_index: prev_index}}
+  def shift(%__MODULE__{prev_index: nil} = store) do
+    {nil, store}
   end
 
   def shift(%__MODULE__{prev_index: prev_index, heap: heap} = store) do

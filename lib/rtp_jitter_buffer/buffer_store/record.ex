@@ -1,7 +1,8 @@
 defmodule Membrane.Element.RTP.JitterBuffer.BufferStore.Record do
-  @moduledoc """
-  Describes a structure that is stored in the BufferStore.
-  """
+  @moduledoc false
+
+  # Describes a structure that is stored in the BufferStore.
+
   alias Membrane.Element.RTP.JitterBuffer
   @enforce_keys [:index, :timestamp, :buffer]
   defstruct @enforce_keys
