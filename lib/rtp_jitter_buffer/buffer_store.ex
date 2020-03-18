@@ -8,7 +8,8 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   #   - `rollover_count` - count of all performed rollovers
   #   - `heap` - contains records containing buffers
   #   - `prev_index` - index of the last packet that has been served
-  #   - `end_index` - index of the oldest packet inserted into the store
+  #   - `end_index` - the highest index in the buffer so far, mapping to the most recently produced
+  #                   RTP packet placed in JitterBuffer
 
   use Bunch
   alias Membrane.Element.RTP.JitterBuffer
@@ -20,12 +21,14 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   defstruct prev_index: nil,
             end_index: nil,
             heap: Heap.new(&__MODULE__.Record.rtp_comparator/2),
+            set: MapSet.new(),
             rollover_count: 0
 
   @type t :: %__MODULE__{
           prev_index: JitterBuffer.packet_index() | nil,
           end_index: JitterBuffer.packet_index() | nil,
           heap: Heap.t(),
+          set: MapSet.t(),
           rollover_count: non_neg_integer()
         }
 
@@ -53,12 +56,12 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   @spec do_insert_buffer(t(), Buffer.t(), JitterBuffer.sequence_number()) ::
           {:ok, t()} | {:error, insert_error()}
   defp do_insert_buffer(%__MODULE__{prev_index: nil} = store, buffer, 0) do
-    store = add_to_heap(store, __MODULE__.Record.new(buffer, @seq_number_limit))
+    store = add_record(store, __MODULE__.Record.new(buffer, @seq_number_limit))
     {:ok, %__MODULE__{store | prev_index: @seq_number_limit - 1}}
   end
 
   defp do_insert_buffer(%__MODULE__{prev_index: nil} = store, buffer, seq_num) do
-    store = add_to_heap(store, __MODULE__.Record.new(buffer, seq_num))
+    store = add_record(store, __MODULE__.Record.new(buffer, seq_num))
     {:ok, %__MODULE__{store | prev_index: seq_num - 1}}
   end
 
@@ -81,7 +84,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
 
     if is_fresh_packet?(prev_index, index) do
       record = __MODULE__.Record.new(buffer, index)
-      {:ok, add_to_heap(store, record)}
+      {:ok, add_record(store, record)}
     else
       {:error, :late_packet}
     end
@@ -121,7 +124,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
     {nil, store}
   end
 
-  def shift(%__MODULE__{prev_index: prev_index, heap: heap} = store) do
+  def shift(%__MODULE__{prev_index: prev_index, heap: heap, set: set} = store) do
     record = Heap.root(heap)
 
     expected_next_index = prev_index + 1
@@ -129,8 +132,9 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
     {result, store} =
       if record != nil and record.index == expected_next_index do
         updated_heap = Heap.pop(heap)
+        updated_set = MapSet.delete(set, record.index)
 
-        updated_store = %__MODULE__{store | heap: updated_heap}
+        updated_store = %__MODULE__{store | heap: updated_heap, set: updated_set}
 
         {record, updated_store}
       else
@@ -227,11 +231,11 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
     end
   end
 
-  defp add_to_heap(%__MODULE__{heap: heap} = store, %__MODULE__.Record{} = record) do
-    if contains_index(heap, record.index) do
+  defp add_record(%__MODULE__{heap: heap, set: set} = store, %__MODULE__.Record{} = record) do
+    if set |> MapSet.member?(record.index) do
       store
     else
-      %__MODULE__{store | heap: Heap.push(heap, record)}
+      %__MODULE__{store | heap: Heap.push(heap, record), set: MapSet.put(set, record.index)}
       |> update_end_index(record.index)
     end
   end
@@ -249,12 +253,4 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   defp update_end_index(%__MODULE__{end_index: last} = store, added_index)
        when last >= added_index,
        do: store
-
-  defp contains_index(heap, index) do
-    Enum.reduce_while(heap, false, fn
-      %__MODULE__.Record{index: ^index}, _acc -> {:halt, true}
-      %__MODULE__.Record{index: current_i}, _acc when current_i > index -> {:halt, false}
-      _, _ -> {:cont, false}
-    end)
-  end
 end
