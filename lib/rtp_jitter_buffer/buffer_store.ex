@@ -5,7 +5,7 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   # defined in RFC 3711 (SRTP) as: 2^16 * rollover count + sequence number.
 
   # ## Fields
-  #   - `rollover_count` - count of all performed rollovers
+  #   - `rollover_count` - count of all performed rollovers (cycles of sequence number)
   #   - `heap` - contains records containing buffers
   #   - `prev_index` - index of the last packet that has been served
   #   - `end_index` - the highest index in the buffer so far, mapping to the most recently produced
@@ -16,7 +16,6 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
   alias Membrane.Buffer
 
   @seq_number_limit 65_536
-  @seq_num_rollover_delta @seq_number_limit / 4
 
   defstruct prev_index: nil,
             end_index: nil,
@@ -71,17 +70,13 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
          seq_num
        ) do
     index =
-      cond do
-        has_rolled_over?(prev_index, seq_num) ->
-          seq_num + (roc + 1) * @seq_number_limit
-
-        from_before_rollover?(prev_index, seq_num) ->
-          seq_num + (roc - 1) * @seq_number_limit
-
-        true ->
-          seq_num + roc * @seq_number_limit
+      case from_which_cycle(prev_index, seq_num) do
+        :current -> seq_num + roc * @seq_number_limit
+        :prev -> seq_num + (roc - 1) * @seq_number_limit
+        :next -> seq_num + (roc + 1) * @seq_number_limit
       end
 
+    # TODO: Consider taking some action if the gap between indices is too big
     if is_fresh_packet?(prev_index, index) do
       record = __MODULE__.Record.new(buffer, index)
       {:ok, add_record(store, record)}
@@ -190,26 +185,26 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore do
 
   defp is_fresh_packet?(prev_index, index), do: index > prev_index
 
-  # Checks if the sequence number has rolled over
-  # Assumes the rollover happened if old sequence number was within @seq_num_rollover_delta from the limit
-  # and the new one is below @seq_num_rollover_delta.
-  # This means it can report a false positive but only if a packet is late by more than (limit - 2 * delta)
-  # which is highly unlikely.
-  @spec has_rolled_over?(JitterBuffer.packet_index(), JitterBuffer.sequence_number()) :: boolean
-  def has_rolled_over?(prev_index, seq_num) do
+  @spec from_which_cycle(JitterBuffer.packet_index(), JitterBuffer.sequence_number()) ::
+          :current | :next | :prev
+  def from_which_cycle(prev_index, seq_num) do
     prev_seq_num = rem(prev_index, @seq_number_limit)
 
-    prev_seq_num > @seq_number_limit - @seq_num_rollover_delta and
-      seq_num < @seq_num_rollover_delta
-  end
+    # calculate the distance between prev_seq_num and new seq_num assuming it comes from:
+    # a) current cycle
+    distance_if_current = abs(prev_seq_num - seq_num)
+    # b) previous cycle
+    distance_if_prev = abs(prev_seq_num - (seq_num - @seq_number_limit))
+    # c) next cycle
+    distance_if_next = abs(prev_seq_num - (seq_num + @seq_number_limit))
 
-  @spec from_before_rollover?(JitterBuffer.packet_index(), JitterBuffer.sequence_number()) ::
-          boolean
-  def from_before_rollover?(prev_index, seq_num) do
-    prev_seq_num = rem(prev_index, @seq_number_limit)
-
-    prev_seq_num < @seq_num_rollover_delta and
-      seq_num > @seq_number_limit - @seq_num_rollover_delta
+    [
+      {:current, distance_if_current},
+      {:next, distance_if_next},
+      {:prev, distance_if_prev}
+    ]
+    |> Enum.min_by(fn {_atom, distance} -> distance end)
+    ~> ({result, _value} -> result)
   end
 
   @spec shift_while(t, (t, __MODULE__.Record.t() -> boolean), [__MODULE__.Record.t() | nil]) ::
