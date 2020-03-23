@@ -223,7 +223,8 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStoreTest do
         (Enum.into((m - 5)..(m - 1), []) ++ Enum.into(0..4, []))
         |> enum_into_store(store)
 
-      assert BufferStore.size(store) == 10
+      store_content = BufferStore.dump(store)
+      assert length(store_content) == 10
     end
 
     test "handles late packets after a rollover" do
@@ -233,49 +234,6 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStoreTest do
       Enum.each(indexes, fn _index ->
         assert {%BufferStore.Record{}, _store} = BufferStore.shift(store)
       end)
-    end
-  end
-
-  describe "When counting size it" do
-    test "counts empty slots as if they occupied space", %{base_store: base} do
-      wanted_size = 10
-      buffer = BufferFactory.sample_buffer(@base_index + wanted_size)
-      {:ok, store} = BufferStore.insert_buffer(base, buffer)
-
-      assert BufferStore.size(store) == wanted_size
-    end
-
-    test "returns 1 if the BufferStore has exactly one record", %{base_store: base_store} do
-      buffer = BufferFactory.sample_buffer(@next_index)
-      {:ok, store} = BufferStore.insert_buffer(base_store, buffer)
-      assert BufferStore.size(store) == 1
-    end
-
-    test "returns 0 if the BufferStore is empty", %{base_store: store} do
-      assert BufferStore.size(store) == 0
-    end
-
-    test "takes into account empty slots both before and after a rollover" do
-      store = store_with_blanks(@seq_number_limit - 4)
-      assert BufferStore.size(store) == 10
-    end
-
-    test "if store is not initialized and heap has exactly one element returns 1" do
-      {:ok, store} = %BufferStore{} |> BufferStore.insert_buffer(BufferFactory.sample_buffer(2))
-      assert BufferStore.size(store) == 1
-    end
-
-    test "if store is not initialized and heap has more than one element return proper size" do
-      wanted_size = 10
-      next_index = @base_index + wanted_size - 1
-
-      {:ok, store} =
-        %BufferStore{}
-        |> BufferStore.insert_buffer(BufferFactory.sample_buffer(@base_index))
-        ~> ({:ok, store} ->
-              BufferStore.insert_buffer(store, BufferFactory.sample_buffer(next_index)))
-
-      assert BufferStore.size(store) == wanted_size
     end
   end
 
@@ -306,16 +264,5 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStoreTest do
       {:ok, store} = BufferStore.insert_buffer(acc, buffer)
       store
     end)
-  end
-
-  # Returns shuffled store that span over 10 slots
-  defp store_with_blanks(base) do
-    (Enum.into(1..2, []) ++ Enum.into(5..7, []) ++ Enum.into(9..10, []))
-    |> Enum.shuffle()
-    |> Enum.map(&rem(&1 + base, @seq_number_limit))
-    |> enum_into_store(%BufferStore{
-      prev_index: rem(base, @seq_number_limit),
-      rollover_count: div(base, @seq_number_limit)
-    })
   end
 end

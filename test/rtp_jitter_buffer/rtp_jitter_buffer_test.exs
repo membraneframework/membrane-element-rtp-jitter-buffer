@@ -32,12 +32,12 @@ defmodule Membrane.Element.RTP.JitterBufferTest do
     end
 
     test "any new buffer is kept without redemand", %{state: state, buffer: buffer} do
-      assert BufferStore.size(state.store) == 0
+      assert BufferStore.dump(state.store) == []
       assert {:ok, state} = RTPJitterBuffer.handle_process(:input, buffer, nil, state)
 
       assert %State{store: store} = state
-      assert BufferStore.size(store) == 1
-      assert {%BufferStore.Record{buffer: ^buffer}, _new_store} = BufferStore.shift(store)
+      assert {%BufferStore.Record{buffer: ^buffer}, new_store} = BufferStore.shift(store)
+      assert BufferStore.dump(new_store) == []
     end
   end
 
@@ -52,7 +52,7 @@ defmodule Membrane.Element.RTP.JitterBufferTest do
                RTPJitterBuffer.handle_process(:input, buffer, nil, state)
 
       assert %RTPJitterBuffer.State{store: store} = state
-      assert BufferStore.size(store) == 0
+      assert BufferStore.dump(store) == []
     end
 
     test "refuses to add that packet when it comes too late", %{state: state} do
@@ -82,7 +82,7 @@ defmodule Membrane.Element.RTP.JitterBufferTest do
       buffers = commands |> Keyword.get_values(:buffer) |> Enum.map(fn {:output, buf} -> buf end)
 
       assert [^first_buffer, ^second_buffer, ^third_buffer] = buffers
-      assert BufferStore.size(result_store) == 0
+      assert BufferStore.dump(result_store) == []
     end
   end
 
