@@ -1,18 +1,26 @@
 defmodule Membrane.Element.RTP.JitterBuffer.BufferStore.Record do
-  @moduledoc """
-  Describes a structure that is stored in the BufferStore.
-  """
+  @moduledoc false
+
+  # Describes a structure that is stored in the BufferStore.
+
   alias Membrane.Element.RTP.JitterBuffer
-  @enforce_keys [:seq_num, :buffer]
+  @enforce_keys [:index, :timestamp, :buffer]
   defstruct @enforce_keys
 
   @type t :: %__MODULE__{
-          seq_num: JitterBuffer.sequence_number(),
+          index: JitterBuffer.packet_index(),
+          timestamp: Membrane.Time.t(),
           buffer: Membrane.Buffer.t()
         }
 
-  @spec new(Membrane.Buffer.t(), JitterBuffer.sequence_number()) :: t()
-  def new(buffer, seq_num), do: %__MODULE__{seq_num: seq_num, buffer: buffer}
+  @spec new(Membrane.Buffer.t(), JitterBuffer.packet_index()) :: t()
+  def new(buffer, index) do
+    %__MODULE__{
+      index: index,
+      timestamp: Membrane.Time.monotonic_time(),
+      buffer: buffer
+    }
+  end
 
   @doc """
   Compares two records.
@@ -21,6 +29,6 @@ defmodule Membrane.Element.RTP.JitterBuffer.BufferStore.Record do
   """
   # Designed to use with Heap: https://gitlab.com/jimsy/heap/blob/master/lib/heap.ex#L71
   @spec rtp_comparator(t(), t()) :: boolean()
-  def rtp_comparator(%__MODULE__{seq_num: l_seq_num}, %__MODULE__{seq_num: r_seq_num}),
-    do: l_seq_num < r_seq_num
+  def rtp_comparator(%__MODULE__{index: l_index}, %__MODULE__{index: r_index}),
+    do: l_index < r_index
 end
