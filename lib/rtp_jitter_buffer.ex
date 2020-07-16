@@ -5,7 +5,7 @@ defmodule Membrane.Element.RTP.JitterBuffer do
   use Membrane.Filter
   use Bunch
   alias Membrane.Element.RTP.JitterBuffer.BufferStore
-  alias Membrane.Caps.RTP, as: Caps
+  alias Membrane.RTP, as: Caps
 
   use Membrane.Log
 
