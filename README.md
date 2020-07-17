@@ -2,6 +2,8 @@
 
 [![CircleCI](https://circleci.com/gh/membraneframework/membrane-element-rtp-jitter-buffer.svg?style=svg)](https://circleci.com/gh/membraneframework/membrane-element-rtp-jitter-buffer)
 
+# DEPRECATED as it became part of [membrane_rtp_plugin](https://github.com/membraneframework/membrane_rtp_plugin)
+
 This package provides elements that can be used for buffering incoming packets
 to reduce network jitter.
 
